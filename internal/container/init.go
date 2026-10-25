@@ -8,6 +8,8 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/hardik-bharti/minibox/internal/network"
 )
 
 // configFD is the file descriptor on which the child receives its Config.
@@ -36,10 +38,13 @@ func Init() error {
 	}{
 		{"make mounts private", makeMountsPrivate},
 		{"mount overlay", func() error { return mountOverlay(c) }},
+		{"write /etc/resolv.conf", func() error { return writeResolvConf(c) }},
 		{"set up /dev", func() error { return setupDev(c.mergedDir()) }},
 		{"mount /proc", func() error { return mountProc(c.mergedDir()) }}, // must precede pivot_root
+		{"mount /sys", func() error { return mountSys(c.mergedDir()) }},   // must precede pivot_root
 		{"pivot_root", func() error { return pivotRoot(c.mergedDir()) }},
 		{"set hostname", func() error { return unix.Sethostname([]byte(c.Hostname)) }},
+		{"bring up loopback", network.BringUpLoopback},
 	}
 	for _, s := range steps {
 		if err := s.fn(); err != nil {

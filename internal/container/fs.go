@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/hardik-bharti/minibox/internal/network"
 )
 
 // These functions run inside the child, after it has entered its new user
@@ -123,4 +125,40 @@ func mountProc(newRoot string) error {
 		return fmt.Errorf("mount /proc: %w", err)
 	}
 	return nil
+}
+
+// mountSys mounts a read-only sysfs at newRoot/sys.
+//
+// sysfs shows the network devices of the mounting process's network
+// namespace, so the kernel only lets a user namespace mount it if that user
+// namespace owns the current network namespace. That is why /sys only
+// became possible once containers got their own network namespace (Phase
+// 3). Like /proc, it must be mounted before pivot_root (same
+// mnt_already_visible rule). Read-only because nothing in a container
+// should be reconfiguring kernel objects through /sys.
+func mountSys(newRoot string) error {
+	target := filepath.Join(newRoot, "sys")
+	if err := os.MkdirAll(target, 0o555); err != nil {
+		return err
+	}
+	flags := uintptr(unix.MS_RDONLY | unix.MS_NOSUID | unix.MS_NOEXEC | unix.MS_NODEV)
+	if err := unix.Mount("sysfs", target, "sysfs", flags, ""); err != nil {
+		return fmt.Errorf("mount /sys: %w", err)
+	}
+	return nil
+}
+
+// writeResolvConf points the container's DNS at slirp4netns's forwarder in
+// bridge mode. It writes through the overlay, so the change lands in the
+// container's upper layer and the image is untouched. With --net=none there
+// is no DNS server to point at, so the image's file (if any) is left alone.
+func writeResolvConf(c *Config) error {
+	if c.Net != network.Bridge {
+		return nil
+	}
+	etc := filepath.Join(c.mergedDir(), "etc")
+	if err := os.MkdirAll(etc, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(etc, "resolv.conf"), []byte(network.ResolvConf), 0o644)
 }

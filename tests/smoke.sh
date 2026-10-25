@@ -38,13 +38,11 @@ echo "Phase 1: isolation"
 
 # Every namespace we asked for must differ from the host's. The
 # /proc/<pid>/ns/* links name a namespace by its inode number.
-for ns in user mnt pid uts ipc; do
+for ns in user mnt pid uts ipc net; do
     inside=$(box readlink /proc/self/ns/$ns)
     outside=$(readlink /proc/self/ns/$ns)
     if [ "$inside" != "$outside" ]; then ok "new $ns namespace ($inside)"; else bad "new $ns namespace" "same as host: $inside"; fi
 done
-# We did not ask for a network namespace yet (that comes in Phase 3).
-check "network namespace shared with host (until Phase 3)" "$(readlink /proc/self/ns/net)" "$(box readlink /proc/self/ns/net)"
 
 # User namespace: root inside, our UID outside, and only that one mapping.
 check "uid 0 inside container" "0" "$(box id -u)"
@@ -131,6 +129,56 @@ if [ "${MINIBOX_SKIP_CPU:-0}" != 1 ]; then
 else
     echo "  skip CPU throttle test (MINIBOX_SKIP_CPU=1)"
 fi
+
+echo "Phase 3: networking"
+
+# --net=none (the default): a private network namespace with only lo, UP.
+check "--net=none: only lo exists" "lo" "$(box ls /sys/class/net)"
+check "--net=none: loopback works" "0" "$(box ping -c1 -W1 127.0.0.1 >/dev/null 2>&1; echo $?)"
+check "--net=none: no route out" "unreachable" "$(box wget -T2 -q -O- http://1.1.1.1 2>&1 | grep -o unreachable)"
+check "/sys mounted read-only" "ro" "$(box sh -c 'grep " /sys " /proc/mounts | cut -d" " -f4 | cut -d, -f1')"
+
+if command -v slirp4netns >/dev/null; then
+    net() { "$B" run --net bridge "$@"; }
+    check "bridge: tap0 has container IP" "10.0.3.100/24" "$(net "$IMG" sh -c 'ip -4 -o addr show tap0' | awk '{print $4}')"
+    check "bridge: default route via gateway" "default via 10.0.3.2 dev tap0" "$(net "$IMG" ip route | grep default | sed 's/ *$//')"
+    check "bridge: resolv.conf points at slirp DNS" "nameserver 10.0.3.3" "$(net "$IMG" cat /etc/resolv.conf)"
+    check "bridge: resolv.conf not written to the image" "no" "$(grep -qs 10.0.3.3 $IMG/etc/resolv.conf && echo yes || echo no)"
+
+    # Outbound (NAT) to a server on the VM's own address: proves traffic
+    # leaves the container's namespace without needing the internet.
+    vmip=$(ip -4 route get 1.1.1.1 | grep -o 'src [0-9.]*' | cut -d' ' -f2)
+    echo outbound-ok > "$MINIBOX_ROOT/index.html"
+    python3 -m http.server 18181 --bind "$vmip" --directory "$MINIBOX_ROOT" >/dev/null 2>&1 & srv=$!
+    python3 -m http.server 18182 --bind 127.0.0.1 --directory "$MINIBOX_ROOT" >/dev/null 2>&1 & lsrv=$!
+    sleep 0.5
+    check "bridge: outbound to VM address ($vmip)" "outbound-ok" "$(net "$IMG" wget -T3 -q -O- "http://$vmip:18181/" 2>&1)"
+    # The gateway 10.0.3.2 would normally mean the host's 127.0.0.1; we
+    # pass --disable-host-loopback so host-local services stay private.
+    check "bridge: host 127.0.0.1 services unreachable" "blocked" "$(net "$IMG" wget -T3 -q -O- http://10.0.3.2:18182/ >/dev/null 2>&1 && echo reached || echo blocked)"
+    kill "$srv" "$lsrv"; rm "$MINIBOX_ROOT/index.html"
+
+    # Published port: a one-shot listener in the container, reached from the host.
+    net -p 18183:80 "$IMG" nc -l -p 80 -e echo published-ok >/dev/null 2>&1 & mb=$!
+    got=""
+    for _ in $(seq 20); do got=$(curl -s -m1 --http0.9 http://127.0.0.1:18183/ || true); [ -n "$got" ] && break; sleep 0.1; done
+    wait "$mb" || true
+    check "bridge: -p 18183:80 reaches container" "published-ok" "$got"
+
+    # Internet + DNS, only if the VM itself is online.
+    if curl -s -m3 -o /dev/null http://example.com; then
+        check "bridge: DNS + internet (example.com)" "<title>Example Domain</title>" "$(net "$IMG" wget -T5 -q -O- http://example.com | grep -o '<title>.*</title>')"
+    else
+        echo "  skip internet check (VM is offline)"
+    fi
+
+    check "bridge: busy host port is an error" "1" "$(python3 -m http.server 18184 >/dev/null 2>&1 & p=$!; sleep 0.5; net -p 18184:80 "$IMG" true 2>/dev/null; echo $?; kill $p)"
+    check "slirp4netns stopped after exit" "0" "$(pgrep -u "$(id -u)" -c -x slirp4netns || true)"
+    check "state dirs removed after networked runs" "0" "$(find "$MINIBOX_ROOT" -mindepth 1 | wc -l)"
+else
+    echo "  skip bridge tests (slirp4netns not installed)"
+fi
+check "-p without --net=bridge rejected" "1" "$("$B" run -p 8080:80 "$IMG" true 2>/dev/null; echo $?)"
 
 echo
 if [ "$failures" -eq 0 ]; then echo "smoke tests passed"; else echo "$failures smoke test(s) FAILED"; exit 1; fi

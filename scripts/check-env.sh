@@ -148,6 +148,21 @@ check_subids() {
     fi
 }
 
+check_slirp() {
+    # Optional: --net=bridge uses slirp4netns for rootless outbound access.
+    # --net=none (the default) needs nothing extra. slirp4netns opens
+    # /dev/net/tun inside the container's namespaces to create tap0.
+    if ! command -v slirp4netns >/dev/null 2>&1; then
+        warn "slirp4netns not installed (optional)" \
+             "only needed for --net=bridge: sudo apt install slirp4netns"
+    elif [ ! -c /dev/net/tun ]; then
+        warn "/dev/net/tun missing; --net=bridge will fail" \
+             "sudo modprobe tun"
+    else
+        pass "slirp4netns $(slirp4netns --version | head -1 | awk '{print $3}') and /dev/net/tun present (--net=bridge)"
+    fi
+}
+
 check_vcpu_stalls() {
     # A VM whose host does not schedule its virtual CPUs regularly breaks
     # CPU-quota enforcement (Phase 2) and makes every timing benchmark
@@ -194,6 +209,7 @@ check_cgroup_v2
 check_userns
 check_overlayfs
 check_subids
+check_slirp
 check_vcpu_stalls
 check_tools
 

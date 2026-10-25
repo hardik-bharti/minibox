@@ -9,22 +9,27 @@ import (
 	"path/filepath"
 
 	"github.com/hardik-bharti/minibox/internal/cgroups"
+	"github.com/hardik-bharti/minibox/internal/network"
 )
 
 // Config describes one container. The parent fills it in and sends it to
 // the child (init) process as JSON over a pipe, so every field is exported.
 type Config struct {
-	ID       string   // random hex ID, also the default hostname
-	Rootfs   string   // absolute path to the image; becomes the read-only overlay lower layer
-	Command  []string // program and arguments to exec inside the container
-	Hostname string   // hostname inside the new UTS namespace
-	StateDir string   // per-container dir holding the overlay upper/work/merged dirs
+	ID       string       // random hex ID, also the default hostname
+	Rootfs   string       // absolute path to the image; becomes the read-only overlay lower layer
+	Command  []string     // program and arguments to exec inside the container
+	Hostname string       // hostname inside the new UTS namespace
+	StateDir string       // per-container dir holding the overlay upper/work/merged dirs
+	Net      network.Mode // none: loopback only; bridge: slirp4netns outbound access
 
 	// Limits are applied by the parent (host side) via cgroups. The child
 	// never needs them, so they are not sent over the config pipe.
 	Limits cgroups.Limits `json:"-"`
 	// WantCgroup creates a cgroup even with no limits, for usage stats.
 	WantCgroup bool `json:"-"`
+	// Ports are host->container forwards, set up by the parent through
+	// slirp4netns (bridge mode only).
+	Ports []network.Port `json:"-"`
 }
 
 // Overlay directory layout inside StateDir.
@@ -65,6 +70,7 @@ func NewConfig(rootfs string, command []string, hostname, stateRoot string) (*Co
 		Command:  command,
 		Hostname: hostname,
 		StateDir: filepath.Join(stateRoot, id),
+		Net:      network.None,
 	}, nil
 }
 

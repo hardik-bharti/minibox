@@ -7,7 +7,7 @@ actually does and generates a policy, and `minibox run --policy` enforces it.
 Built as an Operating Systems course project. It covers namespaces, cgroups v2,
 overlayfs, pivot_root, capabilities, seccomp and syscall tracing.
 
-> **Status:** Phases 1 (isolation) and 2 (resource limits) done. See [docs/PROGRESS.md](docs/PROGRESS.md).
+> **Status:** Phases 1 (isolation), 2 (resource limits) and 3 (networking) done. See [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Requirements
 
@@ -15,6 +15,7 @@ overlayfs, pivot_root, capabilities, seccomp and syscall tracing.
   (developed on Ubuntu 26.04.1, kernel 7.0)
 - Go 1.27+
 - No root needed for the core runtime
+- Optional: `slirp4netns` for `--net=bridge` (`sudo apt install slirp4netns`)
 
 `make check-env` verifies all of these and says how to fix anything missing.
 
@@ -35,7 +36,7 @@ make smoke       # end-to-end checks in this VM
 | `cmd/minibox/` | CLI entry point and subcommand dispatch |
 | `internal/container/` | Namespaces, overlayfs, /dev, /proc, pivot_root (Phase 1) |
 | `internal/cgroups/` | Resource limits via cgroups v2 (Phase 2) |
-| `internal/network/` | Network namespace and veth setup (Phase 3) |
+| `internal/network/` | Network namespace, loopback, slirp4netns outbound access and port publishing (Phase 3) |
 | `internal/security/` | Capabilities, seccomp, masked paths (Phase 4) |
 | `internal/profile/` | Tracing and policy generation (Phase 5) |
 | `scripts/` | Environment check, image download, CPU-throttle repro |
@@ -62,6 +63,8 @@ command.
 | `--cpus N` | CPU limit in CPUs, e.g. `0.5` |
 | `--pids N` | Max processes+threads (minimum 8) |
 | `--stats` | Print cgroup resource usage to stderr on exit |
+| `--net none\|bridge` | `none` (default): loopback only. `bridge`: IP 10.0.3.100, DNS and outbound access via slirp4netns |
+| `-p HOST:CONTAINER[/udp]` | Publish a port (needs `--net bridge`, repeatable) |
 
 ```sh
 ./bin/minibox run --memory 50m --pids 20 --stats images/alpine sh
@@ -71,7 +74,7 @@ Limits use cgroups v2 inside a delegated systemd user scope. minibox starts
 one automatically via `systemd-run --user --scope`. See
 [docs/phase2-cgroups.md](docs/phase2-cgroups.md).
 
-Each container gets new user, PID, mount, UTS and IPC namespaces, and an
+Each container gets new user, PID, mount, UTS, IPC and network namespaces, and an
 overlayfs root on top of the image, so the image is never modified. Inside,
 you are root (UID 0), but that maps to your own user on the host. Writes are
 discarded when the container exits.
@@ -82,6 +85,18 @@ forwarded to the container. Press it again to force-kill.
 
 Container state lives in `~/.local/share/minibox/containers/<id>` while it
 runs (override with `MINIBOX_ROOT`) and is deleted on exit.
+
+```sh
+# Networking: none by default; bridge gives rootless outbound access
+./bin/minibox run --net bridge images/alpine wget -qO- http://example.com
+./bin/minibox run --net bridge -p 8080:80 images/alpine nc -l -p 80 -e echo hi
+```
+
+Every container gets its own network namespace. With `--net bridge`,
+[slirp4netns](https://github.com/rootless-containers/slirp4netns) gives it a
+`tap0` interface and NATs its traffic in user space, so no root is needed.
+Docs: [docs/phase3-networking.md](docs/phase3-networking.md) explains why
+this was chosen over a veth pair plus bridge and iptables, which needs root.
 
 How it works, step by step: [docs/phase1-isolation.md](docs/phase1-isolation.md).
 

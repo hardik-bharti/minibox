@@ -12,6 +12,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/hardik-bharti/minibox/internal/cgroups"
+	"github.com/hardik-bharti/minibox/internal/network"
 )
 
 // namespaces is the set of new namespaces each container gets.
@@ -21,8 +22,10 @@ import (
 //   - PID: the container sees only its own processes; its command is PID 1.
 //   - UTS: the container can have its own hostname.
 //   - IPC: separate System V IPC objects and POSIX message queues.
+//   - NET: own interfaces, routes, ports and firewall state. Created in both
+//     --net modes; bridge mode then adds a tap0 interface (see network).
 const namespaces = syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS | syscall.CLONE_NEWPID |
-	syscall.CLONE_NEWUTS | syscall.CLONE_NEWIPC
+	syscall.CLONE_NEWUTS | syscall.CLONE_NEWIPC | syscall.CLONE_NEWNET
 
 // Result is what Run reports after the container exits.
 type Result struct {
@@ -61,10 +64,27 @@ func Run(c *Config) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if err := sendConfig(configW, c); err != nil {
+	abort := func(err error) (Result, error) {
+		configW.Close()
 		cmd.Process.Kill()
 		cmd.Wait()
-		return Result{}, fmt.Errorf("send config: %w", err)
+		return Result{}, err
+	}
+
+	// init is now blocked reading its config, so the network can be set
+	// up before the user's command exists. Sending the config afterwards
+	// is what releases init, so the command never runs without its network.
+	if c.Net == network.Bridge {
+		slirp, err := network.StartSlirp(cmd.Process.Pid, c.StateDir, c.Ports)
+		if err != nil {
+			return abort(fmt.Errorf("network: %w", err))
+		}
+		// Deferred after removeStateDir, so it runs before it: slirp's
+		// API socket lives in the state dir.
+		defer slirp.Stop()
+	}
+	if err := sendConfig(configW, c); err != nil {
+		return abort(fmt.Errorf("send config: %w", err))
 	}
 
 	stop := forwardSignals(cmd.Process)

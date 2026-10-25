@@ -2,10 +2,30 @@
 
 ## Current phase
 
-**Phase 3 (networking): next.** Phase 2 is done. The user asked for Phases
-3-7 to be completed in one go (2026-10-25).
+**Phase 4 (baseline security): next, waiting for the user's go-ahead.**
+Phase 3 is done.
 
 ## Done
+
+### Phase 3: Networking (2026-10-25)
+- `--net none|bridge` (default `none`) and `-p HOST:CONTAINER[/proto]`.
+  Package `internal/network`.
+- Every container gets `CLONE_NEWNET`. `lo` is brought up via ioctl.
+- bridge = rootless slirp4netns 1.3.3: tap0 10.0.3.100/24, gw 10.0.3.2,
+  DNS 10.0.3.3 (CIDR moved off 10.0.2.0/24 because VirtualBox NAT uses it).
+  Started with `--enable-sandbox --enable-seccomp --disable-host-loopback
+  --mtu=65520`. Port forwards go through its API socket (`add_hostfwd`).
+- No race: init blocks on its config pipe until slirp reports ready.
+  `--exit-fd` makes slirp exit even if minibox is SIGKILLed (tested).
+- `/sys` now mounted read-only (needs our own netns). Closes a Phase 1 issue.
+- Bridge mode writes `/etc/resolv.conf` through the overlay.
+- Chose slirp4netns over veth+bridge+iptables because the latter needs root
+  in the host netns (sudo needs a password here). Tradeoff table in
+  `docs/phase3-networking.md`.
+- Tests: `internal/network/config_test.go`, CLI flag tests, 16 new smoke
+  checks (none/bridge, outbound NAT to VM IP, host loopback blocked, -p,
+  internet+DNS when online, busy port error, no slirp/state left behind).
+  `check-env.sh` reports slirp4netns and /dev/net/tun (optional).
 
 ### Phase 2: Resource limits (2026-10-25)
 - Flags `--memory`, `--cpus`, `--pids`, `--stats`; package `internal/cgroups`.
@@ -69,13 +89,15 @@
 
 ## Next
 
-1. Phase 3: networking (`--net`).
+1. Phase 4: baseline security (capabilities, seccomp, masked paths,
+   no_new_privs).
 
 ## Open issues
 - If minibox itself is SIGKILLed, its container dir under
   `~/.local/share/minibox/containers/` is left behind (the container itself is
   killed). Possible fix later: a `minibox prune` command.
-- No `/sys` in the container yet (sysfs needs our own network namespace, Phase 3).
+- slirp4netns runs outside the container cgroup (its usage is not charged
+  to the container). Containers cannot reach each other (no shared bridge).
 - PID 1 inside is the user's command, so it must reap zombies itself (like
   `docker run` without `--init`).
 - `uidmap` (newuidmap/newgidmap) is not installed. `/etc/subuid` already has

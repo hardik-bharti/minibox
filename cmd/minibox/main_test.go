@@ -21,6 +21,9 @@ func TestRunDispatch(t *testing.T) {
 		{"run without args shows run usage", []string{"run"}, 2, "", "Usage: minibox run"},
 		{"run with missing command", []string{"run", "/"}, 2, "", "Usage: minibox run"},
 		{"run with missing rootfs", []string{"run", "/does/not/exist", "sh"}, 1, "", "rootfs"},
+		{"bad --net rejected", []string{"run", "--net", "host", "/", "sh"}, 1, "", "invalid --net"},
+		{"bad -p rejected", []string{"run", "--net", "bridge", "-p", "80", "/", "sh"}, 2, "", "HOST:CONTAINER"},
+		{"-p without bridge rejected", []string{"run", "-p", "8080:80", "/", "sh"}, 1, "", "needs --net=bridge"},
 		{"profile is a stub for now", []string{"profile"}, 1, "", "Phase 5"},
 	}
 

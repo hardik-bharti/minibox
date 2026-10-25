@@ -11,6 +11,7 @@ import (
 
 	"github.com/hardik-bharti/minibox/internal/cgroups"
 	"github.com/hardik-bharti/minibox/internal/container"
+	"github.com/hardik-bharti/minibox/internal/network"
 )
 
 // errUsage means the usage text has been printed; exit with status 2.
@@ -22,8 +23,24 @@ type runFlags struct {
 	memory   string
 	limits   cgroups.Limits
 	stats    bool
+	net      network.Mode
+	ports    portList
 	rootfs   string
 	command  []string
+}
+
+// portList collects repeated -p flags.
+type portList []network.Port
+
+func (l *portList) String() string { return fmt.Sprint(*l) }
+
+func (l *portList) Set(s string) error {
+	p, err := network.ParsePort(s)
+	if err != nil {
+		return err
+	}
+	*l = append(*l, p)
+	return nil
 }
 
 // parseRunFlags parses `minibox run [flags] <rootfs> <cmd> [args...]`.
@@ -40,6 +57,9 @@ func parseRunFlags(args []string, stderr io.Writer) (*runFlags, error) {
 	fs.Float64Var(&f.limits.CPUs, "cpus", 0, "CPU limit in CPUs, e.g. 0.5 (default: unlimited)")
 	fs.Int64Var(&f.limits.Pids, "pids", 0, "maximum number of processes (default: unlimited)")
 	fs.BoolVar(&f.stats, "stats", false, "print cgroup resource usage to stderr on exit")
+	netMode := fs.String("net", "none", "network: none (loopback only) or bridge (outbound access via slirp4netns)")
+	fs.Var(&f.ports, "p", "publish a port, HOST:CONTAINER[/tcp|udp] (repeatable, needs --net=bridge)")
+	fs.Var(&f.ports, "publish", "same as -p")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "Usage: minibox run [flags] <rootfs> <cmd> [args...]")
 		fs.PrintDefaults()
@@ -60,6 +80,13 @@ func parseRunFlags(args []string, stderr io.Writer) (*runFlags, error) {
 	}
 	if err := f.limits.Validate(); err != nil {
 		return nil, err
+	}
+	var err error
+	if f.net, err = network.ParseMode(*netMode); err != nil {
+		return nil, err
+	}
+	if len(f.ports) > 0 && f.net != network.Bridge {
+		return nil, errors.New("-p needs --net=bridge (with --net=none there is nothing to forward to)")
 	}
 	f.rootfs, f.command = fs.Arg(0), fs.Args()[1:]
 	return f, nil
@@ -94,6 +121,8 @@ func cmdRun(args []string, stderr io.Writer) int {
 	}
 	cfg.Limits = f.limits
 	cfg.WantCgroup = needCgroup
+	cfg.Net = f.net
+	cfg.Ports = f.ports
 
 	res, err := container.Run(cfg)
 	if err != nil {
