@@ -91,7 +91,15 @@ func Run(c *Config) (Result, error) {
 	defer stop()
 
 	var res Result
-	res.ExitCode, err = exitCode(cmd.Wait())
+	if c.Tracer != nil {
+		// The tracer reaps init itself, so cmd.Wait must not be used.
+		var ws syscall.WaitStatus
+		ws, err = c.Tracer.Trace(cmd.Process.Pid)
+		cmd.Process.Release()
+		res.ExitCode = waitStatusCode(ws)
+	} else {
+		res.ExitCode, err = exitCode(cmd.Wait())
+	}
 	if cg != nil {
 		st := cg.Stats() // read before Destroy removes the cgroup
 		res.Stats = &st
@@ -152,6 +160,8 @@ func startInit(c *Config, cgFD *os.File) (*exec.Cmd, *os.File, error) {
 		GidMappingsEnableSetgroups: false,
 		// If minibox dies, kill the container instead of leaving it orphaned.
 		Pdeathsig: syscall.SIGKILL,
+		// Profiling: the child calls PTRACE_TRACEME and stops at its exec.
+		Ptrace: c.Tracer != nil,
 	}
 	if cgFD != nil {
 		// clone3(CLONE_INTO_CGROUP): the child starts life inside the
@@ -218,8 +228,16 @@ func exitCode(err error) (int, error) {
 	if !ok {
 		return 0, err
 	}
-	if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-		return 128 + int(ws.Signal()), nil
+	if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+		return waitStatusCode(ws), nil
 	}
 	return exitErr.ExitCode(), nil
+}
+
+// waitStatusCode is the shell convention: exit status, or 128+signal.
+func waitStatusCode(ws syscall.WaitStatus) int {
+	if ws.Signaled() {
+		return 128 + int(ws.Signal())
+	}
+	return ws.ExitStatus()
 }

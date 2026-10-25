@@ -7,7 +7,7 @@ actually does and generates a policy, and `minibox run --policy` enforces it.
 Built as an Operating Systems course project. It covers namespaces, cgroups v2,
 overlayfs, pivot_root, capabilities, seccomp and syscall tracing.
 
-> **Status:** Phases 1 (isolation), 2 (resource limits), 3 (networking) and 4 (baseline security) done. See [docs/PROGRESS.md](docs/PROGRESS.md).
+> **Status:** Phases 1-5 done (isolation, resource limits, networking, baseline security, profiling + policy enforcement). See [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Requirements
 
@@ -65,6 +65,8 @@ command.
 | `--stats` | Print cgroup resource usage to stderr on exit |
 | `--net none\|bridge` | `none` (default): loopback only. `bridge`: IP 10.0.3.100, DNS and outbound access via slirp4netns |
 | `-p HOST:CONTAINER[/udp]` | Publish a port (needs `--net bridge`, repeatable) |
+| `-v HOST:CONTAINER[:ro]` | Bind-mount a host directory (repeatable) |
+| `--policy FILE` | Enforce a policy from `minibox profile` (seccomp allowlist, listed caps only, read-only root except listed paths) |
 | `--security baseline\|none` | `baseline` (default): Docker's default caps + seccomp profile, masked `/proc`/`/sys` paths, no_new_privs. `none`: namespaces only |
 
 ```sh
@@ -103,6 +105,20 @@ By default every container runs with Docker's default capability set and
 seccomp profile, with sensitive `/proc` and `/sys` paths masked or
 read-only, and with no_new_privs set. See
 [docs/phase4-security.md](docs/phase4-security.md).
+
+### Automatic least privilege
+
+```sh
+# Trace what the app does (ptrace) and write a policy...
+./bin/minibox profile -o policy.json images/alpine sh -c 'echo hi > /tmp/f; cat /etc/os-release'
+# ...then enforce it: only those syscalls, only the inferred capabilities,
+# and a read-only root except the paths the app wrote.
+./bin/minibox run --policy policy.json images/alpine sh -c 'echo hi > /tmp/f; cat /etc/os-release'
+```
+
+See [docs/phase5-profiling.md](docs/phase5-profiling.md). It covers why we
+use ptrace rather than eBPF, how file accesses and capabilities are
+classified, and the limitations.
 
 How it works, step by step: [docs/phase1-isolation.md](docs/phase1-isolation.md).
 

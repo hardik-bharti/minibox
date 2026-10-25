@@ -77,6 +77,14 @@ func BindReadonly(p string) error {
 	if err := unix.Mount(p, p, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
 		return err
 	}
+	return RemountReadonly(p)
+}
+
+// RemountReadonly makes the mount at p read-only. p must already be a
+// mount point. (Don't bind "/" onto itself first: the new mount would be
+// stacked on top of the root, while the process's root keeps pointing at
+// the original mount, so we'd make the wrong one read-only.)
+func RemountReadonly(p string) error {
 	var st unix.Statfs_t
 	if err := unix.Statfs(p, &st); err != nil {
 		return err

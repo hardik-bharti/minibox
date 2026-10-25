@@ -22,6 +22,9 @@ type PolicyFile struct {
 	Capabilities  []string  `json:"capabilities"`
 	WritablePaths []string  `json:"writable_paths"`
 	Observed      Observed  `json:"observed"`
+
+	// Warnings from the profiler, shown to the user but not saved.
+	Warnings []string `json:"-"`
 }
 
 // Observed records what the profiler saw.

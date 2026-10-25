@@ -128,3 +128,19 @@ func TestExitCode(t *testing.T) {
 		}
 	}
 }
+
+func TestParseVolume(t *testing.T) {
+	dir := t.TempDir()
+	v, err := ParseVolume(dir + ":/data:ro")
+	if err != nil || v.Host != dir || v.Container != "/data" || !v.ReadOnly {
+		t.Errorf("ParseVolume ro = %+v, %v", v, err)
+	}
+	if v, err := ParseVolume(dir + ":/data/"); err != nil || v.ReadOnly || v.Container != "/data" {
+		t.Errorf("ParseVolume rw = %+v, %v", v, err)
+	}
+	for _, bad := range []string{dir, dir + ":data", dir + ":/", "/does/not/exist:/x", dir + ":/x:rx", dir + ":/x:ro:extra"} {
+		if _, err := ParseVolume(bad); err == nil {
+			t.Errorf("ParseVolume(%q) accepted", bad)
+		}
+	}
+}

@@ -206,5 +206,36 @@ check "/proc/kcore masked (/dev/null)" "0" "$(box sh -c 'wc -c < /proc/kcore')"
 check "/proc/sys mounted read-only" "ro" "$(box sh -c 'grep " /proc/sys " /proc/mounts | cut -d" " -f4 | cut -d, -f1')"
 check "normal work still runs under baseline" "ok" "$(box sh -c 'echo hi > /tmp/x && cat /tmp/x >/dev/null && ps >/dev/null && apk --version >/dev/null && echo ok')"
 
+echo "Phase 5: profiling and policy enforcement"
+
+pol=$MINIBOX_ROOT/policy.json
+# A workload that writes /tmp, creates a directory under /var/cache, and
+# binds port 80 (needs CAP_NET_BIND_SERVICE). nc -l blocks, so it runs in
+# the background and is killed once bound.
+# grep is part of it so the status checks below can run under the policy.
+work='echo hi > /tmp/f; mkdir -p /var/cache/app; echo x > /var/cache/app/d; nc -l -p 80 2>/dev/null & sleep 0.3; kill $!; grep -q Cap /proc/self/status; echo done'
+out=$("$B" profile -o "$pol" "$IMG" sh -c "$work" 2>&1)
+check "profile runs the command" "done" "$(head -1 <<<"$out")"
+jq_() { python3 -I -c "import json,sys; p=json.load(open(sys.argv[1])); print($1)" "$pol"; }
+check "policy lists observed writable paths" "['/tmp', '/var/cache']" "$(jq_ 'p["writable_paths"]')"
+check "bind to port 80 inferred CAP_NET_BIND_SERVICE" "['CAP_NET_BIND_SERVICE']" "$(jq_ 'p["capabilities"]')"
+check "policy includes openat-style syscalls actually used" "True" "$(jq_ '"open" in p["syscalls"] and "mount" not in p["syscalls"]')"
+check "profiled syscall count is small (< 60)" "True" "$(jq_ 'len(p["syscalls"]) < 60')"
+
+check "same workload succeeds under --policy" "done" "$("$B" run --policy "$pol" "$IMG" sh -c "$work" 2>&1 | tail -1)"
+check "write outside writable paths is read-only" "Read-only file system" "$("$B" run --policy "$pol" "$IMG" sh -c 'echo x > /etc/x' 2>&1 | grep -o 'Read-only file system')"
+check "unprofiled syscall denied (uname -> hostname prints ?)" "?" "$("$B" run --policy "$pol" "$IMG" hostname 2>&1)"
+field=CapEff; check "--policy keeps only the inferred caps" "0000000000000400" "$(status --policy "$pol")"
+field=Seccomp; check "--policy installs a seccomp filter" "2" "$(status --policy "$pol")"
+python3 -I -c 'import json,sys; p=json.load(open(sys.argv[1])); p["capabilities"]=[]; json.dump(p,open(sys.argv[1],"w"))' "$pol"
+check "without the cap, binding port 80 fails" "denied" "$("$B" run --policy "$pol" "$IMG" sh -c 'nc -l -p 80 2>/tmp/err; grep -q "Permission denied" /tmp/err && echo denied')"
+
+set +e; "$B" profile -o "$MINIBOX_ROOT/p2.json" "$IMG" sh -c 'exit 7' >/dev/null 2>&1; code=$?; set -e
+check "profile propagates exit code" "7" "$code"
+"$B" profile -o "$MINIBOX_ROOT/p2.json" --merge "$IMG" sh -c 'echo > /tmp/a' >/dev/null 2>&1
+check "--merge unions writable paths across runs" "['/tmp']" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["writable_paths"])' "$MINIBOX_ROOT/p2.json")"
+rm -f "$pol" "$MINIBOX_ROOT/p2.json"
+check "no state left after profiling" "0" "$(find "$MINIBOX_ROOT" -mindepth 1 | wc -l)"
+
 echo
 if [ "$failures" -eq 0 ]; then echo "smoke tests passed"; else echo "$failures smoke test(s) FAILED"; exit 1; fi

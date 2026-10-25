@@ -2,10 +2,35 @@
 
 ## Current phase
 
-**Phase 5 (profiling mode): in progress.** Phase 4 is done. The user asked
+**Phase 6 (evaluation): in progress.** Phase 5 is done. The user asked
 (2026-10-25) for Phases 3-7 in one go, with no stop between phases.
 
 ## Done
+
+### Phase 5: Profiling and policy enforcement (2026-10-25)
+- `minibox profile [run flags] [-o policy.json] [--merge] <rootfs> <cmd>`
+  and `minibox run --policy FILE`. Package `internal/profile`.
+- ptrace tracer (eBPF needs root here: unprivileged_bpf_disabled=2).
+  Uses PTRACE_GET_SYSCALL_INFO and follows forks/clones. Recording starts
+  at the first PTRACE_EVENT_EXEC (the user's command), so minibox's own
+  setup syscalls are excluded.
+- Paths read from /proc/pid/mem, resolved through /proc/pid/cwd and fd/N,
+  classified read / write / parent-dir write. Writable paths minimised.
+- Capabilities inferred from syscalls + args (bind port < 1024, raw sockets,
+  chown, ...) with recorded reasons. A DAC_OVERRIDE false positive for
+  world-writable /dev/null was fixed.
+- Enforcement: allowlist seccomp (EPERM default, plus execve/exit/
+  exit_group/rt_sigreturn/restart_syscall), listed caps only, `/` remounted
+  read-only with rw binds for writable paths, plus the baseline masks and NNP.
+- Bug found and fixed: binding `/` onto itself before the read-only
+  remount left a hidden rw copy of the root. Now `/` is only remounted.
+- Also added `-v HOST:CONTAINER[:ro]` volumes, and
+  `scripts/build-bench-image.sh` (images/bench = Alpine + python3 +
+  busybox-extras, installed with apk --root through a volume).
+- Verified manually: a Python http.server profiled under curl load (46
+  syscalls) serves correctly under its policy.
+- Tests: profile unit tests (writable path minimisation, merge, table
+  sanity), CLI tests, 14 smoke checks.
 
 ### Phase 4: Baseline security (2026-10-25)
 - `--security baseline|none` (default baseline). Package `internal/security`.
@@ -106,9 +131,8 @@
 
 ## Next
 
-1. Phase 5: `minibox profile` (ptrace tracer) and `run --policy`.
-2. Phase 6: attack suite + benchmarks.
-3. Phase 7: write-up.
+1. Phase 6: attack suite + benchmarks.
+2. Phase 7: write-up.
 
 ## Open issues
 - If minibox itself is SIGKILLed, its container dir under

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 
 	"github.com/hardik-bharti/minibox/internal/cgroups"
 	"github.com/hardik-bharti/minibox/internal/network"
@@ -23,6 +25,7 @@ type Config struct {
 	StateDir string          // per-container dir holding the overlay upper/work/merged dirs
 	Net      network.Mode    // none: loopback only; bridge: slirp4netns outbound access
 	Security security.Config // capabilities, seccomp, masked paths (applied by init)
+	Volumes  []Volume        // host directories bind-mounted into the container
 
 	// Limits are applied by the parent (host side) via cgroups. The child
 	// never needs them, so they are not sent over the config pipe.
@@ -32,6 +35,48 @@ type Config struct {
 	// Ports are host->container forwards, set up by the parent through
 	// slirp4netns (bridge mode only).
 	Ports []network.Port `json:"-"`
+	// Tracer, if set, runs the container under ptrace (minibox profile).
+	Tracer Tracer `json:"-"`
+}
+
+// Tracer follows a container started with ptrace. Trace is called on the
+// same OS thread that started the container (ptrace requires this), once
+// init is stopped at its first exec, and must return init's final wait
+// status after every traced process has exited.
+type Tracer interface {
+	Trace(pid int) (syscall.WaitStatus, error)
+}
+
+// Volume is one -v HOST:CONTAINER[:ro] bind mount.
+type Volume struct {
+	Host      string // absolute host path
+	Container string // absolute path inside the container
+	ReadOnly  bool
+}
+
+// ParseVolume parses "HOST:CONTAINER" or "HOST:CONTAINER:ro".
+func ParseVolume(s string) (Volume, error) {
+	parts := strings.Split(s, ":")
+	var v Volume
+	switch {
+	case len(parts) == 3 && parts[2] == "ro":
+		v.ReadOnly = true
+	case len(parts) == 3 && parts[2] == "rw", len(parts) == 2:
+	default:
+		return v, fmt.Errorf("volume %q: want HOST:CONTAINER[:ro]", s)
+	}
+	host, err := filepath.Abs(parts[0])
+	if err != nil {
+		return v, err
+	}
+	if fi, err := os.Stat(host); err != nil || !fi.IsDir() {
+		return v, fmt.Errorf("volume %q: host path must be an existing directory", s)
+	}
+	if !filepath.IsAbs(parts[1]) || filepath.Clean(parts[1]) == "/" {
+		return v, fmt.Errorf("volume %q: container path must be absolute and not /", s)
+	}
+	v.Host, v.Container = host, filepath.Clean(parts[1])
+	return v, nil
 }
 
 // Overlay directory layout inside StateDir.

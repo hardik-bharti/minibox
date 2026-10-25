@@ -46,6 +46,7 @@ func Init() error {
 		{"make mounts private", makeMountsPrivate},
 		{"mount overlay", func() error { return mountOverlay(c) }},
 		{"write /etc/resolv.conf", func() error { return writeResolvConf(c) }},
+		{"mount volumes", func() error { return mountVolumes(c) }},
 		{"set up /dev", func() error { return setupDev(c.mergedDir()) }},
 		{"mount /proc", func() error { return mountProc(c.mergedDir()) }}, // must precede pivot_root
 		{"mount /sys", func() error { return mountSys(c.mergedDir()) }},   // must precede pivot_root

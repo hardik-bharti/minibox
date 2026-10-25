@@ -17,10 +17,10 @@ var version = "dev"
 const usage = `minibox: a rootless Linux container runtime
 
 Usage:
-  minibox run [flags] <rootfs> <cmd> [args...]  run a command in a container
-  minibox profile <rootfs> <cmd> [args...]      trace a command and write a policy
-  minibox version                               print version
-  minibox help                                  show this help
+  minibox run [flags] <rootfs> <cmd> [args...]      run a command in a container
+  minibox profile [flags] <rootfs> <cmd> [args...]  trace a command, write policy.json
+  minibox version                                   print version
+  minibox help                                      show this help
 `
 
 func main() {
@@ -49,16 +49,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		// Deliberately left out of the usage text.
 		return cmdInit(stderr)
 	case "profile":
-		return notImplemented(stderr, "profile", 5)
+		return cmdProfile(args[1:], stderr)
 	default:
 		fmt.Fprintf(stderr, "minibox: unknown command %q\n\n%s", args[0], usage)
 		return 2
 	}
-}
-
-// notImplemented is a placeholder so the CLI shape is fixed from day one;
-// each phase replaces one of these with a real implementation.
-func notImplemented(stderr io.Writer, cmd string, phase int) int {
-	fmt.Fprintf(stderr, "minibox: %q is not implemented yet (Phase %d)\n", cmd, phase)
-	return 1
 }

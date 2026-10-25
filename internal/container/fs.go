@@ -8,6 +8,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/hardik-bharti/minibox/internal/network"
+	"github.com/hardik-bharti/minibox/internal/security"
 )
 
 // These functions run inside the child, after it has entered its new user
@@ -161,4 +162,27 @@ func writeResolvConf(c *Config) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(etc, "resolv.conf"), []byte(network.ResolvConf), 0o644)
+}
+
+// mountVolumes bind-mounts host directories into the container. This runs
+// before pivot_root, while host paths are still reachable. The target
+// directory is created through the overlay (so in the upper layer, not the
+// image). We can only bind what our own UID can already access on the
+// host, so a volume can't expose anything we couldn't read anyway.
+func mountVolumes(c *Config) error {
+	for _, v := range c.Volumes {
+		target := filepath.Join(c.mergedDir(), v.Container)
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			return err
+		}
+		if err := unix.Mount(v.Host, target, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+			return fmt.Errorf("bind %s: %w", v.Host, err)
+		}
+		if v.ReadOnly {
+			if err := security.RemountReadonly(target); err != nil {
+				return fmt.Errorf("make %s read-only: %w", v.Container, err)
+			}
+		}
+	}
+	return nil
 }

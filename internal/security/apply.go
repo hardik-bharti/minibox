@@ -57,10 +57,18 @@ func NewFromPolicy(p *PolicyFile) Config {
 	return Config{Mode: Policy, Caps: p.Capabilities, Syscalls: p.Syscalls, Writable: p.WritablePaths}
 }
 
-// alwaysAllowed are syscalls a policy filter must allow even if the trace
-// didn't see them: the filter is installed *before* execve, so execve must
-// pass or the command could never start.
-var alwaysAllowed = []string{"execve"}
+// alwaysAllowed are syscalls a policy filter allows even if the trace
+// didn't see them:
+//   - execve: the filter is installed *before* execve, so it must pass or
+//     the command could never start.
+//   - exit, exit_group: denying exit would make a process unkillable from
+//     the inside; it would spin on EPERM.
+//   - rt_sigreturn, restart_syscall: the kernel's own plumbing for signal
+//     handlers and for resuming a syscall interrupted by a stop. A signal
+//     that happened not to arrive while profiling must not crash the app.
+//
+// None of these gives a process any new ability.
+var alwaysAllowed = []string{"execve", "exit", "exit_group", "rt_sigreturn", "restart_syscall"}
 
 // SeccompFilter returns the filter for this configuration, or nil (none).
 func (c *Config) SeccompFilter() (*Filter, error) {
@@ -114,7 +122,7 @@ func readonlyRoot(writable []string) error {
 			return fmt.Errorf("bind %s: %w", p, err)
 		}
 	}
-	return BindReadonly("/")
+	return RemountReadonly("/")
 }
 
 // Lock is the last step before execve: set no_new_privs, drop
