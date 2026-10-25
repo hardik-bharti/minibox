@@ -14,7 +14,7 @@
 - `scripts/get-alpine.sh`: finds the latest Alpine minirootfs from the release
   index, verifies its SHA-256, and unpacks it into `images/alpine` (git-ignored).
   Last run fetched Alpine 3.24.3.
-- Go module `minibox`, CLI skeleton with `run`/`profile` stubs, and empty
+- Go module `github.com/hardik-bharti/minibox`, CLI skeleton with `run`/`profile` stubs, and empty
   `internal/` packages, one per phase.
 - Makefile targets: build, test, smoke, vet, fmt, check-env, image, clean.
 - Tests: CLI dispatch unit test (`cmd/minibox/main_test.go`) and
@@ -37,5 +37,3 @@ an overlayfs root, pivot_root, a fresh /proc, a hostname, and cleanup on exit.
 - `uidmap` (newuidmap/newgidmap) is not installed. `/etc/subuid` already has
   a range for `hardik` (100000:65536). Not needed for Phase 1, which maps only
   container root to our UID. Install it only if we later want multi-UID containers.
-- The Go module path is just `minibox`. Rename it to a
-  `github.com/<user>/minibox` path if the repo is published.
