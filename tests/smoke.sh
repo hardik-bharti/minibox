@@ -82,5 +82,55 @@ check "stdin passed through" "hello" "$(echo hello | box cat)"
 check "state dirs removed after exit" "0" "$(find "$MINIBOX_ROOT" -mindepth 1 | wc -l)"
 check "no overlay mounts leaked to host" "0" "$(grep -c " overlay " /proc/self/mountinfo || true)"
 
+echo "Phase 2: resource limits"
+
+# Memory: a 200 MiB buffer under a 50 MiB limit is OOM-killed (SIGKILL,
+# exit 137). The same command with a 20 MiB buffer runs fine. Swap is
+# disabled for the container, so the hog cannot escape into swap.
+set +e
+out=$("$B" run --memory 50m --stats "$IMG" dd if=/dev/zero of=/dev/null bs=200M count=1 2>&1); code=$?
+set -e
+check "memory hog killed (exit 137)" "137" "$code"
+check "OOM kill reported" "1" "$(grep -c "killed for exceeding --memory" <<<"$out")"
+check "memory peak capped at 50 MiB" "memory_peak_bytes=$((50 << 20))" "$(grep -o 'memory_peak_bytes=[0-9]*' <<<"$out")"
+check "small allocation under limit succeeds" "0" "$("$B" run --memory 50m "$IMG" dd if=/dev/zero of=/dev/null bs=20M count=1 >/dev/null 2>&1; echo $?)"
+
+# Pids: a *bounded* fork bomb, a binary process tree 7 levels deep. Without a
+# limit it peaks at ~380 tasks (shells + sleeps); with --pids 20 it must
+# never exceed 20. It's bounded so that even if the limit failed, the test
+# could not exhaust the VM.
+tree='f() { if [ "$1" -eq 0 ]; then sleep 1; return; fi; f $(($1-1)) & f $(($1-1)) & wait; }; f 7'
+out=$("$B" run --pids 20 --stats "$IMG" sh -c "$tree" 2>&1 || true)
+check "fork tree capped at --pids 20" "pids_peak=20" "$(grep -o 'pids_peak=[0-9]*' <<<"$out")"
+check "refused forks reported" "1" "$(grep -c "fork(s) refused by --pids 20" <<<"$out")"
+
+# Input validation.
+check "--pids below minimum rejected" "1" "$("$B" run --pids 3 "$IMG" true 2>/dev/null; echo $?)"
+check "bad --memory rejected" "1" "$("$B" run --memory lots "$IMG" true 2>/dev/null; echo $?)"
+
+# Cleanup: no container cgroups or minibox scopes left behind.
+ucg=/sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service
+for _ in $(seq 20); do   # systemd removes the scope asynchronously
+    left=$(find "$ucg" -type d -name supervisor 2>/dev/null | wc -l)
+    [ "$left" -eq 0 ] && break
+    sleep 0.1
+done
+check "cgroups removed after exit" "0" "$left"
+
+# CPU: off by default until the VM's vCPU stalls are fixed (see
+# docs/PROGRESS.md). A fixed amount of work (no signals involved) should take
+# roughly 4x longer at --cpus 0.25 than unlimited, and the kernel should
+# report throttled periods.
+if [ "${MINIBOX_TEST_CPU:-0}" = 1 ]; then
+    work='i=0; while [ $i -lt 400000 ]; do i=$((i+1)); done'
+    t0=$(date +%s%N); "$B" run "$IMG" sh -c "$work"; t1=$(date +%s%N)
+    out=$("$B" run --cpus 0.25 --stats "$IMG" sh -c "$work" 2>&1); t2=$(date +%s%N)
+    ratio=$(( (t2 - t1) * 10 / (t1 - t0) ))   # x10, so 25 means 2.5x slower
+    check "CPU-bound task slowed >= 2.5x at --cpus 0.25 (ratio x10=$ratio)" "yes" "$([ "$ratio" -ge 25 ] && echo yes || echo no)"
+    check "kernel reports throttling" "yes" "$(grep -qE 'nr_throttled=[1-9]' <<<"$out" && echo yes || echo no)"
+else
+    echo "  skip CPU throttle test (set MINIBOX_TEST_CPU=1; blocked by VM vCPU stalls, see docs/PROGRESS.md)"
+fi
+
 echo
 if [ "$failures" -eq 0 ]; then echo "smoke tests passed"; else echo "$failures smoke test(s) FAILED"; exit 1; fi

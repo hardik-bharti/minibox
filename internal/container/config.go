@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/hardik-bharti/minibox/internal/cgroups"
 )
 
 // Config describes one container. The parent fills it in and sends it to
@@ -17,6 +19,12 @@ type Config struct {
 	Command  []string // program and arguments to exec inside the container
 	Hostname string   // hostname inside the new UTS namespace
 	StateDir string   // per-container dir holding the overlay upper/work/merged dirs
+
+	// Limits are applied by the parent (host side) via cgroups. The child
+	// never needs them, so they are not sent over the config pipe.
+	Limits cgroups.Limits `json:"-"`
+	// WantCgroup creates a cgroup even with no limits, for usage stats.
+	WantCgroup bool `json:"-"`
 }
 
 // Overlay directory layout inside StateDir.

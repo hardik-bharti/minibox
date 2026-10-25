@@ -1,47 +1,156 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"syscall"
 
+	"github.com/hardik-bharti/minibox/internal/cgroups"
 	"github.com/hardik-bharti/minibox/internal/container"
 )
 
-// cmdRun implements `minibox run [flags] <rootfs> <cmd> [args...]`.
+// errUsage means the usage text has been printed; exit with status 2.
+var errUsage = errors.New("usage")
+
+// runFlags holds the parsed `minibox run` command line.
+type runFlags struct {
+	hostname string
+	memory   string
+	limits   cgroups.Limits
+	stats    bool
+	rootfs   string
+	command  []string
+}
+
+// parseRunFlags parses `minibox run [flags] <rootfs> <cmd> [args...]`.
 //
 // Go's flag package stops at the first non-flag argument, so flags must come
 // before <rootfs>. That is what we want: in `minibox run img ls -l`, the -l
 // belongs to ls, not to us.
-func cmdRun(args []string, stderr io.Writer) int {
+func parseRunFlags(args []string, stderr io.Writer) (*runFlags, error) {
+	f := &runFlags{}
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	hostname := fs.String("hostname", "", "container hostname (default: container ID)")
+	fs.StringVar(&f.hostname, "hostname", "", "container hostname (default: container ID)")
+	fs.StringVar(&f.memory, "memory", "", "memory limit, e.g. 64m or 1g (swap is disabled)")
+	fs.Float64Var(&f.limits.CPUs, "cpus", 0, "CPU limit in CPUs, e.g. 0.5 (default: unlimited)")
+	fs.Int64Var(&f.limits.Pids, "pids", 0, "maximum number of processes (default: unlimited)")
+	fs.BoolVar(&f.stats, "stats", false, "print cgroup resource usage to stderr on exit")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "Usage: minibox run [flags] <rootfs> <cmd> [args...]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return nil, errUsage // flag has already printed the problem and usage
 	}
 	if fs.NArg() < 2 {
 		fs.Usage()
+		return nil, errUsage
+	}
+	if f.memory != "" {
+		n, err := cgroups.ParseMemory(f.memory)
+		if err != nil {
+			return nil, err
+		}
+		f.limits.MemoryBytes = n
+	}
+	if err := f.limits.Validate(); err != nil {
+		return nil, err
+	}
+	f.rootfs, f.command = fs.Arg(0), fs.Args()[1:]
+	return f, nil
+}
+
+// cmdRun implements `minibox run`.
+func cmdRun(args []string, stderr io.Writer) int {
+	f, err := parseRunFlags(args, stderr)
+	if errors.Is(err, errUsage) {
 		return 2
+	} else if err != nil {
+		return fail(stderr, err)
+	}
+
+	// --stats needs a cgroup too, even without limits.
+	needCgroup := !f.limits.IsZero() || f.stats
+	if needCgroup {
+		if ok, err := cgroups.Delegated(); err != nil {
+			return fail(stderr, err)
+		} else if !ok {
+			return fail(stderr, reexecInScope(args))
+		}
 	}
 
 	stateRoot, err := container.DefaultStateRoot()
 	if err != nil {
 		return fail(stderr, err)
 	}
-	cfg, err := container.NewConfig(fs.Arg(0), fs.Args()[1:], *hostname, stateRoot)
+	cfg, err := container.NewConfig(f.rootfs, f.command, f.hostname, stateRoot)
 	if err != nil {
 		return fail(stderr, err)
 	}
-	code, err := container.Run(cfg)
+	cfg.Limits = f.limits
+	cfg.WantCgroup = needCgroup
+
+	res, err := container.Run(cfg)
 	if err != nil {
 		return fail(stderr, err)
 	}
-	return code
+	reportStats(stderr, f, res)
+	return res.ExitCode
+}
+
+// scopeEnv marks a minibox that has already been re-executed by systemd-run,
+// so a misconfigured system produces an error instead of an endless loop.
+const scopeEnv = "MINIBOX_IN_SCOPE"
+
+// reexecInScope replaces this process with
+//
+//	systemd-run --user --scope -p Delegate=yes -- minibox run <args>
+//
+// A login shell's cgroup (session-N.scope) belongs to root, so we may not
+// create cgroups there. Asking our per-user systemd for a transient scope
+// with Delegate=yes gives us a cgroup we own. systemd removes the scope when
+// we exit. We use exec rather than a child process so the terminal, signals
+// and exit status pass straight through. It only returns on failure.
+func reexecInScope(args []string) error {
+	if os.Getenv(scopeEnv) != "" {
+		return fmt.Errorf("still not in a delegated cgroup after systemd-run; " +
+			"check that 'systemctl --user' works and that cpu/memory/pids are delegated (scripts/check-env.sh)")
+	}
+	systemdRun, err := exec.LookPath("systemd-run")
+	if err != nil {
+		return fmt.Errorf("resource limits need systemd-run to get a delegated cgroup: %w", err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	argv := append([]string{systemdRun, "--user", "--scope", "--quiet", "--collect",
+		"-p", "Delegate=yes", "--", self, "run"}, args...)
+	env := append(os.Environ(), scopeEnv+"=1")
+	return syscall.Exec(systemdRun, argv, env)
+}
+
+// reportStats warns about limit hits (always) and prints full usage (--stats).
+func reportStats(stderr io.Writer, f *runFlags, res container.Result) {
+	if res.Stats == nil {
+		return
+	}
+	if res.Stats.OOMKills > 0 {
+		fmt.Fprintf(stderr, "minibox: %d process(es) killed for exceeding --memory %s\n",
+			res.Stats.OOMKills, f.memory)
+	}
+	if res.Stats.PidsRejected > 0 {
+		fmt.Fprintf(stderr, "minibox: %d fork(s) refused by --pids %d\n",
+			res.Stats.PidsRejected, f.limits.Pids)
+	}
+	if f.stats {
+		fmt.Fprintf(stderr, "minibox stats: %s\n", res.Stats)
+	}
 }
 
 // cmdInit is the hidden entry point for the re-executed child process; see

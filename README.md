@@ -7,8 +7,8 @@ actually does and generates a policy, and `minibox run --policy` enforces it.
 Built as an Operating Systems course project. It covers namespaces, cgroups v2,
 overlayfs, pivot_root, capabilities, seccomp and syscall tracing.
 
-> **Status:** Phase 1 (isolation) done: `minibox run` works. Resource limits,
-> networking and hardening are next. See [docs/PROGRESS.md](docs/PROGRESS.md).
+> **Status:** Phase 1 (isolation) done. Phase 2 (resource limits): memory and
+> pids limits done; CPU limit testing is blocked by a VM issue. See [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Requirements
 
@@ -39,7 +39,7 @@ make smoke       # end-to-end checks in this VM
 | `internal/network/` | Network namespace and veth setup (Phase 3) |
 | `internal/security/` | Capabilities, seccomp, masked paths (Phase 4) |
 | `internal/profile/` | Tracing and policy generation (Phase 5) |
-| `scripts/` | Environment check and image download |
+| `scripts/` | Environment check, image download, CPU-throttle repro |
 | `tests/` | VM-level tests; attack suite comes in Phase 6 |
 | `docs/` | Progress log and design docs |
 
@@ -59,6 +59,18 @@ command.
 | Flag | Meaning |
 |------|---------|
 | `--hostname NAME` | Container hostname (default: the container ID) |
+| `--memory SIZE` | Memory limit, e.g. `64m`, `1g`; swap disabled; exceeding it gets the process OOM-killed |
+| `--cpus N` | CPU limit in CPUs, e.g. `0.5` |
+| `--pids N` | Max processes+threads (minimum 8) |
+| `--stats` | Print cgroup resource usage to stderr on exit |
+
+```sh
+./bin/minibox run --memory 50m --pids 20 --stats images/alpine sh
+```
+
+Limits use cgroups v2 inside a delegated systemd user scope. minibox starts
+one automatically via `systemd-run --user --scope`. See
+[docs/phase2-cgroups.md](docs/phase2-cgroups.md).
 
 Each container gets new user, PID, mount, UTS and IPC namespaces, and an
 overlayfs root on top of the image, so the image is never modified. Inside,

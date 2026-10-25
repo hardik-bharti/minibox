@@ -148,6 +148,26 @@ check_subids() {
     fi
 }
 
+check_vcpu_stalls() {
+    # A VM whose host does not schedule its virtual CPUs regularly breaks
+    # CPU-quota enforcement (Phase 2) and makes every timing benchmark
+    # (Phase 6) meaningless. The guest kernel notices and logs soft
+    # lockups / RCU stalls / clocksource "long readout" gaps.
+    local log n
+    if ! log=$(journalctl -k -b --no-pager 2>/dev/null); then
+        warn "cannot read kernel log to check for vCPU stalls" \
+             "add yourself to the systemd-journal group, or run 'sudo journalctl -k -b | grep -i lockup'"
+        return
+    fi
+    n=$(grep -cE "soft lockup|rcu.*stall|Long readout interval" <<<"$log")
+    if [ "$n" -eq 0 ]; then
+        pass "no vCPU stalls in kernel log since boot"
+    else
+        warn "$n vCPU stall message(s) since boot (soft lockup / RCU stall / clock gaps)" \
+             "the VM host is not scheduling this VM's CPUs; CPU limits and benchmarks are unreliable. See docs/PROGRESS.md (open issues)"
+    fi
+}
+
 check_tools() {
     local t missing=""
     for t in tar sha256sum; do
@@ -169,6 +189,7 @@ check_cgroup_v2
 check_userns
 check_overlayfs
 check_subids
+check_vcpu_stalls
 check_tools
 
 echo

@@ -10,6 +10,8 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/hardik-bharti/minibox/internal/cgroups"
 )
 
 // namespaces is the set of new namespaces each container gets.
@@ -22,17 +24,31 @@ import (
 const namespaces = syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS | syscall.CLONE_NEWPID |
 	syscall.CLONE_NEWUTS | syscall.CLONE_NEWIPC
 
+// Result is what Run reports after the container exits.
+type Result struct {
+	ExitCode int            // 128+N if killed by signal N (shell convention)
+	Stats    *cgroups.Stats // resource usage; nil if no limits were set
+}
+
 // Run starts the container described by c, waits for it to exit and cleans
-// up. It returns the command's exit code (128+N if it was killed by signal N,
-// the shell convention).
-func Run(c *Config) (int, error) {
+// up.
+func Run(c *Config) (Result, error) {
 	if err := createStateDir(c); err != nil {
-		return 0, fmt.Errorf("create state dir: %w", err)
+		return Result{}, fmt.Errorf("create state dir: %w", err)
 	}
 	// The mounts need no cleanup from us: they exist only inside the
 	// container's mount namespace, which the kernel destroys when its last
 	// process exits. Only the directory on disk is left to remove.
 	defer removeStateDir(c.StateDir)
+
+	cg, cgFD, err := setupCgroup(c)
+	if err != nil {
+		return Result{}, err
+	}
+	if cg != nil {
+		defer cg.Destroy()
+		defer cgFD.Close()
+	}
 
 	// Pdeathsig (below) is tied to the OS *thread* that started the child,
 	// not to the process. Go may otherwise retire that thread while the
@@ -41,20 +57,44 @@ func Run(c *Config) (int, error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	cmd, configW, err := startInit(c)
+	cmd, configW, err := startInit(c, cgFD)
 	if err != nil {
-		return 0, err
+		return Result{}, err
 	}
 	if err := sendConfig(configW, c); err != nil {
 		cmd.Process.Kill()
 		cmd.Wait()
-		return 0, fmt.Errorf("send config: %w", err)
+		return Result{}, fmt.Errorf("send config: %w", err)
 	}
 
 	stop := forwardSignals(cmd.Process)
 	defer stop()
 
-	return exitCode(cmd.Wait())
+	var res Result
+	res.ExitCode, err = exitCode(cmd.Wait())
+	if cg != nil {
+		st := cg.Stats() // read before Destroy removes the cgroup
+		res.Stats = &st
+	}
+	return res, err
+}
+
+// setupCgroup creates the container's cgroup if any limit was requested.
+// It returns the cgroup and its directory fd, or nils if none is wanted.
+func setupCgroup(c *Config) (*cgroups.Cgroup, *os.File, error) {
+	if c.Limits.IsZero() && !c.WantCgroup {
+		return nil, nil, nil
+	}
+	cg, err := cgroups.Create(c.ID, c.Limits)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create cgroup: %w", err)
+	}
+	fd, err := cg.Open()
+	if err != nil {
+		cg.Destroy()
+		return nil, nil, err
+	}
+	return cg, fd, nil
 }
 
 // startInit re-executes our own binary as `minibox init` inside new
@@ -62,7 +102,9 @@ func Run(c *Config) (int, error) {
 // usual way to set up a container in Go is to start a fresh copy of the
 // program that is already inside the namespaces and finishes the setup
 // there (see Init).
-func startInit(c *Config) (*exec.Cmd, *os.File, error) {
+//
+// If cgFD is not nil, the child is created directly inside that cgroup.
+func startInit(c *Config, cgFD *os.File) (*exec.Cmd, *os.File, error) {
 	configR, configW, err := os.Pipe()
 	if err != nil {
 		return nil, nil, err
@@ -71,6 +113,11 @@ func startInit(c *Config) (*exec.Cmd, *os.File, error) {
 
 	cmd := exec.Command("/proc/self/exe", "init")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	// init's setup is strictly sequential, so it needs no parallelism.
+	// GOMAXPROCS=1 keeps the Go runtime's thread count low, which matters
+	// because pids.max counts threads and init runs inside the cgroup. The
+	// user's command gets a fresh environment at exec, so this doesn't leak.
+	cmd.Env = append(os.Environ(), "GOMAXPROCS=1")
 	cmd.ExtraFiles = []*os.File{configR} // becomes fd 3 (configFD) in the child
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: namespaces,
@@ -85,6 +132,12 @@ func startInit(c *Config) (*exec.Cmd, *os.File, error) {
 		GidMappingsEnableSetgroups: false,
 		// If minibox dies, kill the container instead of leaving it orphaned.
 		Pdeathsig: syscall.SIGKILL,
+	}
+	if cgFD != nil {
+		// clone3(CLONE_INTO_CGROUP): the child starts life inside the
+		// limited cgroup, so even our own setup code runs under the limits.
+		cmd.SysProcAttr.UseCgroupFD = true
+		cmd.SysProcAttr.CgroupFD = int(cgFD.Fd())
 	}
 
 	if err := cmd.Start(); err != nil {
