@@ -180,5 +180,31 @@ else
 fi
 check "-p without --net=bridge rejected" "1" "$("$B" run -p 8080:80 "$IMG" true 2>/dev/null; echo $?)"
 
+echo "Phase 4: baseline security"
+
+status() { "$B" run "$@" "$IMG" grep "^$field:" /proc/self/status | cut -f2; }
+field=CapEff;     check "baseline keeps Docker's default caps" "00000000a80425fb" "$(status)"
+field=CapBnd;     check "bounding set reduced too (survives exec)" "00000000a80425fb" "$(status)"
+field=NoNewPrivs; check "no_new_privs set" "1" "$(status)"
+field=Seccomp;    check "seccomp filter active" "2" "$(status)"
+field=NoNewPrivs; check "--security none: no no_new_privs" "0" "$(status --security none)"
+field=Seccomp;    check "--security none: no seccomp" "0" "$(status --security none)"
+
+# Each probe prints "denied" if the operation fails. Under --security none
+# the same operations succeed (container root is all-powerful in its own
+# namespaces), which shows the protection comes from Phase 4.
+probe() { "$B" run "$@" "$IMG" sh -c "{ $probe; } >/dev/null 2>&1 && echo allowed || echo denied"; }
+for case in "mount|mount -t tmpfs x /mnt" "unshare|unshare -U -r true" "sethostname|hostname evil" \
+            "write /proc/sys|echo 1 > /proc/sys/net/ipv4/ip_forward" "write /proc/sysrq-trigger|echo h > /proc/sysrq-trigger"; do
+    name=${case%%|*}; probe=${case#*|}
+    check "baseline blocks $name" "denied" "$(probe)"
+done
+probe="mount -t tmpfs x /mnt";        check "--security none allows mount (control)" "allowed" "$(probe --security none)"
+probe="unshare -U -r true";           check "--security none allows unshare (control)" "allowed" "$(probe --security none)"
+check "/sys/firmware masked (empty)" "0" "$(box ls /sys/firmware | wc -l)"
+check "/proc/kcore masked (/dev/null)" "0" "$(box sh -c 'wc -c < /proc/kcore')"
+check "/proc/sys mounted read-only" "ro" "$(box sh -c 'grep " /proc/sys " /proc/mounts | cut -d" " -f4 | cut -d, -f1')"
+check "normal work still runs under baseline" "ok" "$(box sh -c 'echo hi > /tmp/x && cat /tmp/x >/dev/null && ps >/dev/null && apk --version >/dev/null && echo ok')"
+
 echo
 if [ "$failures" -eq 0 ]; then echo "smoke tests passed"; else echo "$failures smoke test(s) FAILED"; exit 1; fi

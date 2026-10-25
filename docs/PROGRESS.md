@@ -2,10 +2,27 @@
 
 ## Current phase
 
-**Phase 4 (baseline security): next, waiting for the user's go-ahead.**
-Phase 3 is done.
+**Phase 5 (profiling mode): in progress.** Phase 4 is done. The user asked
+(2026-10-25) for Phases 3-7 in one go, with no stop between phases.
 
 ## Done
+
+### Phase 4: Baseline security (2026-10-25)
+- `--security baseline|none` (default baseline). Package `internal/security`.
+- Docker's 14 default caps (CapEff/CapBnd = 0xa80425fb), bounding set
+  dropped, ambient set cleared.
+- Docker's default seccomp profile embedded unmodified
+  (`internal/security/profiles/docker-default.json`, moby/profiles
+  seccomp/v0.2.4, sha256 pinned in `scripts/get-docker-profile.sh`) and
+  compiled to BPF by our own pure-Go compiler (no cgo, no libseccomp).
+  We also kill the i386 ABI and deny the x32 ABI.
+- Docker's masked and read-only paths. no_new_privs.
+- Init locks its OS thread because caps, NNP and seccomp are per-thread.
+  The filter is installed without TSYNC, right before execve.
+- Syscall table generated from the kernel UAPI header
+  (`scripts/gen-syscalls.sh`).
+- Tests: BPF interpreter-based unit tests, caps/policy tests, CLI tests, 19
+  smoke checks (including `--security none` controls).
 
 ### Phase 3: Networking (2026-10-25)
 - `--net none|bridge` (default `none`) and `-p HOST:CONTAINER[/proto]`.
@@ -89,8 +106,9 @@ Phase 3 is done.
 
 ## Next
 
-1. Phase 4: baseline security (capabilities, seccomp, masked paths,
-   no_new_privs).
+1. Phase 5: `minibox profile` (ptrace tracer) and `run --policy`.
+2. Phase 6: attack suite + benchmarks.
+3. Phase 7: write-up.
 
 ## Open issues
 - If minibox itself is SIGKILLed, its container dir under

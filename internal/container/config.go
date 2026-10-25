@@ -10,17 +10,19 @@ import (
 
 	"github.com/hardik-bharti/minibox/internal/cgroups"
 	"github.com/hardik-bharti/minibox/internal/network"
+	"github.com/hardik-bharti/minibox/internal/security"
 )
 
 // Config describes one container. The parent fills it in and sends it to
 // the child (init) process as JSON over a pipe, so every field is exported.
 type Config struct {
-	ID       string       // random hex ID, also the default hostname
-	Rootfs   string       // absolute path to the image; becomes the read-only overlay lower layer
-	Command  []string     // program and arguments to exec inside the container
-	Hostname string       // hostname inside the new UTS namespace
-	StateDir string       // per-container dir holding the overlay upper/work/merged dirs
-	Net      network.Mode // none: loopback only; bridge: slirp4netns outbound access
+	ID       string          // random hex ID, also the default hostname
+	Rootfs   string          // absolute path to the image; becomes the read-only overlay lower layer
+	Command  []string        // program and arguments to exec inside the container
+	Hostname string          // hostname inside the new UTS namespace
+	StateDir string          // per-container dir holding the overlay upper/work/merged dirs
+	Net      network.Mode    // none: loopback only; bridge: slirp4netns outbound access
+	Security security.Config // capabilities, seccomp, masked paths (applied by init)
 
 	// Limits are applied by the parent (host side) via cgroups. The child
 	// never needs them, so they are not sent over the config pipe.
@@ -71,6 +73,7 @@ func NewConfig(rootfs string, command []string, hostname, stateRoot string) (*Co
 		Hostname: hostname,
 		StateDir: filepath.Join(stateRoot, id),
 		Net:      network.None,
+		Security: security.NewBaseline(),
 	}, nil
 }
 

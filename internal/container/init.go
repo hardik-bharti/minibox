@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -27,6 +28,12 @@ const containerPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/
 // the user's command, which replaces this process (so the command becomes
 // PID 1). Init only returns if something failed.
 func Init() error {
+	// Capabilities, no_new_privs and seccomp filters belong to a thread,
+	// not a process. Stay on one OS thread so the restrictions we set up
+	// are on the same thread that finally calls execve. We never unlock:
+	// on success this process becomes the user's command.
+	runtime.LockOSThread()
+
 	c, err := readConfig()
 	if err != nil {
 		return fmt.Errorf("read config: %w", err)
@@ -45,6 +52,7 @@ func Init() error {
 		{"pivot_root", func() error { return pivotRoot(c.mergedDir()) }},
 		{"set hostname", func() error { return unix.Sethostname([]byte(c.Hostname)) }},
 		{"bring up loopback", network.BringUpLoopback},
+		{"harden filesystem", c.Security.SetupFilesystem}, // needs CAP_SYS_ADMIN: before Lock
 	}
 	for _, s := range steps {
 		if err := s.fn(); err != nil {
@@ -86,6 +94,11 @@ func execCommand(c *Config) error {
 	path, err := exec.LookPath(c.Command[0])
 	if err != nil {
 		return err
+	}
+	// Last step: no_new_privs, drop capabilities, install seccomp. After
+	// this we can't do any more setup, so nothing but execve may follow.
+	if err := c.Security.Lock(); err != nil {
+		return fmt.Errorf("apply security: %w", err)
 	}
 	return syscall.Exec(path, c.Command, env)
 }

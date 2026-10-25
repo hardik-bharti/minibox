@@ -1,0 +1,4 @@
+docker-default.json is Docker's default seccomp profile, copied unmodified from
+https://github.com/moby/profiles (tag seccomp/v0.2.4, commit 245180c5).
+Copyright The Moby Authors, licensed under the Apache License 2.0.
+Re-download with scripts/get-docker-profile.sh.

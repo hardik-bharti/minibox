@@ -7,7 +7,7 @@ actually does and generates a policy, and `minibox run --policy` enforces it.
 Built as an Operating Systems course project. It covers namespaces, cgroups v2,
 overlayfs, pivot_root, capabilities, seccomp and syscall tracing.
 
-> **Status:** Phases 1 (isolation), 2 (resource limits) and 3 (networking) done. See [docs/PROGRESS.md](docs/PROGRESS.md).
+> **Status:** Phases 1 (isolation), 2 (resource limits), 3 (networking) and 4 (baseline security) done. See [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Requirements
 
@@ -39,7 +39,7 @@ make smoke       # end-to-end checks in this VM
 | `internal/network/` | Network namespace, loopback, slirp4netns outbound access and port publishing (Phase 3) |
 | `internal/security/` | Capabilities, seccomp, masked paths (Phase 4) |
 | `internal/profile/` | Tracing and policy generation (Phase 5) |
-| `scripts/` | Environment check, image download, CPU-throttle repro |
+| `scripts/` | Environment check, image download, CPU-throttle repro, syscall table and Docker profile generators |
 | `tests/` | VM-level tests; attack suite comes in Phase 6 |
 | `docs/` | Progress log and design docs |
 
@@ -65,6 +65,7 @@ command.
 | `--stats` | Print cgroup resource usage to stderr on exit |
 | `--net none\|bridge` | `none` (default): loopback only. `bridge`: IP 10.0.3.100, DNS and outbound access via slirp4netns |
 | `-p HOST:CONTAINER[/udp]` | Publish a port (needs `--net bridge`, repeatable) |
+| `--security baseline\|none` | `baseline` (default): Docker's default caps + seccomp profile, masked `/proc`/`/sys` paths, no_new_privs. `none`: namespaces only |
 
 ```sh
 ./bin/minibox run --memory 50m --pids 20 --stats images/alpine sh
@@ -97,6 +98,11 @@ Every container gets its own network namespace. With `--net bridge`,
 `tap0` interface and NATs its traffic in user space, so no root is needed.
 Docs: [docs/phase3-networking.md](docs/phase3-networking.md) explains why
 this was chosen over a veth pair plus bridge and iptables, which needs root.
+
+By default every container runs with Docker's default capability set and
+seccomp profile, with sensitive `/proc` and `/sys` paths masked or
+read-only, and with no_new_privs set. See
+[docs/phase4-security.md](docs/phase4-security.md).
 
 How it works, step by step: [docs/phase1-isolation.md](docs/phase1-isolation.md).
 
