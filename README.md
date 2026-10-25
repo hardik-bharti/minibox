@@ -7,8 +7,7 @@ actually does and generates a policy, and `minibox run --policy` enforces it.
 Built as an Operating Systems course project. It covers namespaces, cgroups v2,
 overlayfs, pivot_root, capabilities, seccomp and syscall tracing.
 
-> **Status:** Phase 1 (isolation) done. Phase 2 (resource limits): memory and
-> pids limits done; CPU limit testing is blocked by a VM issue. See [docs/PROGRESS.md](docs/PROGRESS.md).
+> **Status:** Phases 1 (isolation) and 2 (resource limits) done. See [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Requirements
 

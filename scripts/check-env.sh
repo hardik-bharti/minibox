@@ -159,7 +159,12 @@ check_vcpu_stalls() {
              "add yourself to the systemd-journal group, or run 'sudo journalctl -k -b | grep -i lockup'"
         return
     fi
-    n=$(grep -cE "soft lockup|rcu.*stall|Long readout interval" <<<"$log")
+    # A single ~1 s "Long readout interval" during boot is normal under
+    # VirtualBox (both clocks agree, the VM was just busy booting), so only
+    # readout gaps longer than 5 s count as stalls.
+    n=$(grep -cE "soft lockup|rcu.*stall" <<<"$log" || true)
+    n=$((n + $(grep -oE "Long readout interval.*cs_nsec: [0-9]+" <<<"$log" |
+               awk '$NF > 5000000000' | wc -l)))
     if [ "$n" -eq 0 ]; then
         pass "no vCPU stalls in kernel log since boot"
     else

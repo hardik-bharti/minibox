@@ -117,11 +117,11 @@ for _ in $(seq 20); do   # systemd removes the scope asynchronously
 done
 check "cgroups removed after exit" "0" "$left"
 
-# CPU: off by default until the VM's vCPU stalls are fixed (see
-# docs/PROGRESS.md). A fixed amount of work (no signals involved) should take
-# roughly 4x longer at --cpus 0.25 than unlimited, and the kernel should
-# report throttled periods.
-if [ "${MINIBOX_TEST_CPU:-0}" = 1 ]; then
+# CPU: a fixed amount of work (no signals involved) should take roughly 4x
+# longer at --cpus 0.25 than unlimited, and the kernel should report
+# throttled periods. Timing-based, so it needs a VM whose vCPUs are scheduled
+# regularly (check-env.sh warns otherwise). MINIBOX_SKIP_CPU=1 skips it.
+if [ "${MINIBOX_SKIP_CPU:-0}" != 1 ]; then
     work='i=0; while [ $i -lt 400000 ]; do i=$((i+1)); done'
     t0=$(date +%s%N); "$B" run "$IMG" sh -c "$work"; t1=$(date +%s%N)
     out=$("$B" run --cpus 0.25 --stats "$IMG" sh -c "$work" 2>&1); t2=$(date +%s%N)
@@ -129,7 +129,7 @@ if [ "${MINIBOX_TEST_CPU:-0}" = 1 ]; then
     check "CPU-bound task slowed >= 2.5x at --cpus 0.25 (ratio x10=$ratio)" "yes" "$([ "$ratio" -ge 25 ] && echo yes || echo no)"
     check "kernel reports throttling" "yes" "$(grep -qE 'nr_throttled=[1-9]' <<<"$out" && echo yes || echo no)"
 else
-    echo "  skip CPU throttle test (set MINIBOX_TEST_CPU=1; blocked by VM vCPU stalls, see docs/PROGRESS.md)"
+    echo "  skip CPU throttle test (MINIBOX_SKIP_CPU=1)"
 fi
 
 echo

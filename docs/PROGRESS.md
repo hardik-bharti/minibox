@@ -2,15 +2,12 @@
 
 ## Current phase
 
-**Phase 2 (cgroups v2): in progress, BLOCKED on a VM issue.** The memory and
-pids limits are done and tested. The CPU limit is implemented, but it can't
-be tested reliably until the VM's vCPU stalls are fixed (see Open issues).
-The user asked for all remaining phases to be completed. Continue with the
-Phase 2 CPU test, then Phases 3-7, once the VM is fixed.
+**Phase 3 (networking): next.** Phase 2 is done. The user asked for Phases
+3-7 to be completed in one go (2026-10-25).
 
 ## Done
 
-### Phase 2: Resource limits (2026-10-25, partial)
+### Phase 2: Resource limits (2026-10-25)
 - Flags `--memory`, `--cpus`, `--pids`, `--stats`; package `internal/cgroups`.
 - Automatic re-exec under `systemd-run --user --scope -p Delegate=yes` when
   not in a delegated cgroup; `supervisor` leaf; `CLONE_INTO_CGROUP`;
@@ -19,7 +16,11 @@ Phase 2 CPU test, then Phases 3-7, once the VM is fixed.
 - OOM kills and refused forks are reported after exit.
 - Tests: unit tests (`internal/cgroups/limits_test.go`); smoke tests for the
   memory OOM kill, the bounded fork tree capped at 20, validation and cgroup
-  cleanup. The CPU smoke test is written but gated behind `MINIBOX_TEST_CPU=1`.
+  cleanup, and the CPU throttle test (4.3x-7.5x slower at `--cpus 0.25`,
+  `nr_throttled > 0`; on by default, `MINIBOX_SKIP_CPU=1` skips it).
+- VM vCPU stalls fixed on the host by the user. `repro-cpu-throttle.sh 10 3`
+  now kills all trials within 0.7 s. check-env.sh ignores the single ~1 s
+  boot-time clocksource readout that VirtualBox always logs.
 - `scripts/repro-cpu-throttle.sh` (minimal repro without minibox) and a
   vCPU-stall check in `check-env.sh`.
 - Write-up: `docs/phase2-cgroups.md`.
@@ -68,19 +69,9 @@ Phase 2 CPU test, then Phases 3-7, once the VM is fixed.
 
 ## Next
 
-1. Fix the VM vCPU stalls (user, on the host). Verify with
-   `scripts/repro-cpu-throttle.sh 10 3` (all trials killed promptly) and
-   `scripts/check-env.sh` (no stall warning).
-2. Run `MINIBOX_TEST_CPU=1 make smoke`, then mark Phase 2 done.
-3. Phase 3: networking.
+1. Phase 3: networking (`--net`).
 
 ## Open issues
-- **BLOCKER: VM vCPU stalls.** The guest kernel logs repeated `soft lockup -
-  CPU#N stuck for 27-84s`, RCU stalls and clocksource gaps up to 60 s. The
-  VirtualBox host (i7-14700HX, hybrid P/E cores) isn't scheduling the VM's
-  vCPUs. Effects: CPU-throttled tasks ignore SIGKILL for tens of seconds,
-  `cpu.stat` accounting is wrong, and any Phase 6 timing benchmark would be
-  invalid. Reproduced without minibox by `scripts/repro-cpu-throttle.sh`.
 - If minibox itself is SIGKILLed, its container dir under
   `~/.local/share/minibox/containers/` is left behind (the container itself is
   killed). Possible fix later: a `minibox prune` command.

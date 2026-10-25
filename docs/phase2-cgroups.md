@@ -64,17 +64,20 @@ last task (EBUSY). systemd removes the transient scope (`--collect`).
 - 200 MiB `dd` buffer under `--memory 50m`: exit 137, `oom_kill=1`, `memory.peak` exactly 50 MiB.
 - Bounded fork tree (about 380 tasks unlimited) under `--pids 20`: `pids.peak` = 20, refused forks reported.
 - No cgroups left after exit.
-- CPU throttling: written but **disabled by default** (`MINIBOX_TEST_CPU=1`). See the blocker below.
+- CPU-bound shell loop under `--cpus 0.25`: at least 2.5x slower than unlimited
+  (ideal 4x), and `nr_throttled > 0`. Measured 4.3x-7.5x over 4 runs on
+  2026-10-25. Skip with `MINIBOX_SKIP_CPU=1`.
 
-## Blocker: CPU limit tests on this VM
-The `cpu.max` value is applied correctly, and the kernel does throttle
-(`nr_throttled` rises). But on this VM a throttled busy loop sometimes ignores
-SIGKILL for 10-60+ s. `scripts/repro-cpu-throttle.sh` reproduces this **without
-minibox** (plain `systemd-run -p CPUQuota=25%`): 2 of 4 trials. Its
-`usage_usec` also reported 27 s of CPU time for a 3 s run, which is impossible.
+## Resolved: vCPU stalls on the VM
+At first, a throttled busy loop sometimes ignored SIGKILL for 10-60+ s, and
+`usage_usec` reported 27 s of CPU for a 3 s run. `scripts/repro-cpu-throttle.sh`
+reproduced it **without minibox** (plain `systemd-run -p CPUQuota=25%`). The
+guest kernel log showed `soft lockup - CPU#N stuck for 27-84s`, RCU stalls and
+clocksource gaps of up to 60 s: the VirtualBox host (hybrid P/E-core CPU) was
+not running the VM's virtual CPUs for long stretches, and a task that is never
+scheduled can't act on a pending signal.
 
-The guest kernel log explains it: repeated `soft lockup - CPU#N stuck for
-27-84s`, RCU stalls and clocksource "Long readout interval" gaps of up to 60
-s. The VirtualBox host is not running this VM's virtual CPUs for long
-stretches. A throttled task that is not scheduled can't act on a pending
-signal. `scripts/check-env.sh` now warns about this.
+After the host-side fix, `repro-cpu-throttle.sh 10 3` killed all 10 trials
+within 0.7 s and the kernel log is clean, so the CPU test is now on by
+default. `scripts/check-env.sh` still warns if stalls come back, because they
+would also invalidate every Phase 6 timing benchmark.
