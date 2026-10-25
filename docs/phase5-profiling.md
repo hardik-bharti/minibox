@@ -151,6 +151,13 @@ what's enforced.
   untested code path, such as an error handler or a rarely used feature,
   may need a syscall that isn't there, and it gets `EPERM`. Mitigations:
   exercise the app well while profiling, and use `--merge` to combine runs.
+  A concrete example we hit: busybox `cat` copies with `sendfile()`, which
+  works when stdout is a pipe or a file. For other stdout types it falls back
+  to `read()`. A policy profiled with stdout piped therefore lacked `read`,
+  and the same command failed when run with a different stdout. Error
+  messages are another typical gap: if the profiled run never printed an
+  error, the syscalls used to print one may be missing, and the error
+  disappears silently.
   This is the same tradeoff as SlimToolkit and oci-seccomp-bpf-hook.
 - Capability inference is heuristic, not observed. The reasons are
   recorded so a human can review them.

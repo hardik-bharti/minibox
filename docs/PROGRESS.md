@@ -2,10 +2,23 @@
 
 ## Current phase
 
-**Phase 7 (write-up): in progress.** Phase 6 is done. The user asked
+**All phases (0-7) done.** The project is complete. Remaining items are
+optional improvements (see Next) and the open issues below. The user asked
 (2026-10-25) for Phases 3-7 in one go, with no stop between phases.
 
 ## Done
+
+### Phase 7: Write-up (2026-10-25)
+- README: overview, Mermaid architecture diagram, quick start, demo commands
+  (each verified, see below), usage, results tables (copied in by
+  `scripts/update-docs-results.py`), limitations, related work.
+- `docs/how-it-works.md` (every OS concept + code pointers),
+  `docs/viva-prep.md` (20 Q&A), `docs/team-split.md` (3-person split),
+  `docs/phase6-evaluation.md` (method, analysis, threats to validity).
+- Demo check found a good coverage example: busybox `cat` uses sendfile()
+  with stdout piped but read() otherwise, so a policy profiled one way
+  failed the other way. The README demo now avoids this, and it's
+  documented as a limitation.
 
 ### Phase 6: Evaluation (2026-10-25)
 - Attack suite: `tests/attacks/probe` (17 attacks, static Go binary mounted
@@ -153,8 +166,11 @@
 
 ## Next
 
-1. Phase 7: README (architecture, results, limitations, related work),
-   how-it-works.md, viva-prep.md, team split.
+Optional improvements, not started:
+1. `minibox prune` for state dirs left behind when minibox itself is SIGKILLed.
+2. Argument-level rules in generated policies (beyond clone), e.g. socket families.
+3. Multi-UID containers via newuidmap (needs `sudo apt install uidmap`).
+4. More benchmark repetitions on a quieter host for tighter confidence intervals.
 
 ## Open issues
 - If minibox itself is SIGKILLed, its container dir under
