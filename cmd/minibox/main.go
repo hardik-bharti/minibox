@@ -17,10 +17,10 @@ var version = "dev"
 const usage = `minibox: a rootless Linux container runtime
 
 Usage:
-  minibox run <rootfs> <cmd> [args...]      run a command in a container
-  minibox profile <rootfs> <cmd> [args...]  trace a command and write a policy
-  minibox version                           print version
-  minibox help                              show this help
+  minibox run [flags] <rootfs> <cmd> [args...]  run a command in a container
+  minibox profile <rootfs> <cmd> [args...]      trace a command and write a policy
+  minibox version                               print version
+  minibox help                                  show this help
 `
 
 func main() {
@@ -43,7 +43,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "minibox %s\n", version)
 		return 0
 	case "run":
-		return notImplemented(stderr, "run", 1)
+		return cmdRun(args[1:], stderr)
+	case "init":
+		// Internal: the re-executed child inside the new namespaces.
+		// Deliberately left out of the usage text.
+		return cmdInit(stderr)
 	case "profile":
 		return notImplemented(stderr, "profile", 5)
 	default:

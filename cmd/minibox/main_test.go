@@ -18,7 +18,9 @@ func TestRunDispatch(t *testing.T) {
 		{"help", []string{"help"}, 0, "Usage:", ""},
 		{"version", []string{"version"}, 0, "minibox dev", ""},
 		{"unknown command", []string{"frobnicate"}, 2, "", `unknown command "frobnicate"`},
-		{"run is a stub for now", []string{"run"}, 1, "", "Phase 1"},
+		{"run without args shows run usage", []string{"run"}, 2, "", "Usage: minibox run"},
+		{"run with missing command", []string{"run", "/"}, 2, "", "Usage: minibox run"},
+		{"run with missing rootfs", []string{"run", "/does/not/exist", "sh"}, 1, "", "rootfs"},
 		{"profile is a stub for now", []string{"profile"}, 1, "", "Phase 5"},
 	}
 
