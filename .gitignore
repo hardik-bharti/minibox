@@ -1,0 +1,16 @@
+# Downloaded root filesystems (fetched by scripts/get-alpine.sh)
+/images/
+
+# Build output
+/bin/
+
+# Go test artifacts
+*.test
+*.out
+coverage.*
+
+# Editor/OS noise
+.vscode/
+.idea/
+*.swp
+.DS_Store
