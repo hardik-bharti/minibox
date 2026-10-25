@@ -281,6 +281,7 @@ startup. A measurable per-syscall cost only in the deliberately syscall-bound
 
 | Document | Contents |
 |----------|----------|
+| [PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md) | **Complete reference**: every feature, CLI, policy format, testing, results, design decisions, troubleshooting |
 | [docs/how-it-works.md](docs/how-it-works.md) | Every OS concept in plain language, with code pointers |
 | [docs/phase1-isolation.md](docs/phase1-isolation.md) | Namespaces, overlay, pivot_root, `/proc` gotcha |
 | [docs/phase2-cgroups.md](docs/phase2-cgroups.md) | cgroup v2 limits, rootless delegation |

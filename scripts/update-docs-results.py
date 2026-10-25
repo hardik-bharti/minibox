@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy the generated result tables into README.md and docs/phase6-evaluation.md.
+"""Copy the generated result tables into README.md, PROJECT_DOCUMENTATION.md and docs/phase6-evaluation.md.
 
 The tables are produced by tests/attacks/run.py and bench/run.py into
 results/*.md. Docs contain marker pairs such as
@@ -19,7 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "results"
-DOCS = [ROOT / "README.md", ROOT / "docs" / "phase6-evaluation.md"]
+DOCS = [ROOT / "README.md", ROOT / "PROJECT_DOCUMENTATION.md", ROOT / "docs" / "phase6-evaluation.md"]
 
 
 def tables(md):
