@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 	"sort"
 
 	"golang.org/x/sys/unix"
@@ -76,17 +77,47 @@ func (c *Config) SeccompFilter() (*Filter, error) {
 	case Baseline:
 		return DockerFilter(c.Caps)
 	case Policy:
-		f := &Filter{Default: ActEPERM}
-		seen := map[string]bool{}
-		for _, name := range append(append([]string{}, alwaysAllowed...), c.Syscalls...) {
-			if !seen[name] {
-				seen[name] = true
-				f.Rules = append(f.Rules, Rule{Name: name, Action: ActAllow})
-			}
-		}
-		return f, nil
+		return policyFilter(c.Syscalls, c.Caps), nil
 	}
 	return nil, nil
+}
+
+// nsCloneFlags are the clone flags that create namespaces (Docker's mask
+// 0x7e020000: NEWNS|NEWCGROUP|NEWUTS|NEWIPC|NEWUSER|NEWPID|NEWNET).
+const nsCloneFlags = 0x7e020000
+
+// policyFilter builds a default-deny allowlist from the policy's syscalls.
+//
+// Allowing syscalls by name alone has one dangerous gap: clone. Programs
+// clone all the time (threads, fork), but clone with CLONE_NEWUSER creates
+// a user namespace, which needs no capability and makes the caller root
+// with every capability again inside it. The Phase 6 attack suite found
+// exactly this (the unshare attack succeeded under a name-only policy). So,
+// as in Docker's profile, clone is only allowed without namespace flags,
+// and clone3 (whose flags are in memory, out of seccomp's reach) gets
+// ENOSYS so libc and Go fall back to clone. The profiler infers
+// CAP_SYS_ADMIN when an app really does create namespaces; such a policy
+// gets plain clone/clone3.
+func policyFilter(syscalls, caps []string) *Filter {
+	f := &Filter{Default: ActEPERM}
+	restrictClone := !slices.Contains(caps, "CAP_SYS_ADMIN")
+	seen := map[string]bool{}
+	for _, name := range append(append([]string{}, alwaysAllowed...), syscalls...) {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		if restrictClone && (name == "clone" || name == "clone3") {
+			continue // added below
+		}
+		f.Rules = append(f.Rules, Rule{Name: name, Action: ActAllow})
+	}
+	if restrictClone && (seen["clone"] || seen["clone3"]) {
+		f.Rules = append(f.Rules,
+			Rule{Name: "clone", Action: ActAllow, Args: []ArgCmp{{Index: 0, Op: OpMaskedEQ, Value: nsCloneFlags, ValueTwo: 0}}},
+			Rule{Name: "clone3", Action: Action{Errno: unix.ENOSYS}})
+	}
+	return f
 }
 
 // SetupFilesystem runs inside the container after pivot_root, while init

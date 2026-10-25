@@ -14,3 +14,5 @@ coverage.*
 .idea/
 *.swp
 .DS_Store
+tests/attacks/bin/
+results/.srv/

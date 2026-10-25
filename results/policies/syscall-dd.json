@@ -1,0 +1,53 @@
+{
+  "minibox_policy": 1,
+  "generated": "2026-10-25T16:25:24Z",
+  "command": [
+    "dd",
+    "if=/dev/zero",
+    "of=/dev/null",
+    "bs=1",
+    "count=500000"
+  ],
+  "syscalls": [
+    "arch_prctl",
+    "brk",
+    "close",
+    "dup2",
+    "getuid",
+    "mmap",
+    "mprotect",
+    "open",
+    "read",
+    "rt_sigaction",
+    "rt_sigprocmask",
+    "set_tid_address",
+    "write",
+    "writev"
+  ],
+  "capabilities": [],
+  "writable_paths": [],
+  "observed": {
+    "syscall_counts": {
+      "arch_prctl": 2,
+      "brk": 4,
+      "close": 8,
+      "dup2": 4,
+      "getuid": 2,
+      "mmap": 2,
+      "mprotect": 4,
+      "open": 4,
+      "read": 1000000,
+      "rt_sigaction": 2,
+      "rt_sigprocmask": 2,
+      "set_tid_address": 2,
+      "write": 1000000,
+      "writev": 6
+    },
+    "read_paths": [
+      "/dev/zero"
+    ],
+    "written_paths": [
+      "/dev/null"
+    ]
+  }
+}

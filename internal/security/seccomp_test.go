@@ -187,6 +187,39 @@ func TestPolicyFilter(t *testing.T) {
 	}
 }
 
+func TestPolicyRestrictsClone(t *testing.T) {
+	c := Config{Mode: Policy, Syscalls: []string{"clone3", "read"}}
+	f, _ := c.SeccompFilter()
+	prog := compile(t, f)
+	cases := map[string]struct {
+		data []byte
+		want uint32
+	}{
+		"thread clone allowed (clone3 seen, so clone is added)": {call("clone", unix.CLONE_VM|unix.CLONE_THREAD), retAllow},
+		"clone(CLONE_NEWUSER) denied":                           {call("clone", unix.CLONE_NEWUSER), retEPERM},
+		"clone3 -> ENOSYS so libc falls back":                   {call("clone3"), unix.SECCOMP_RET_ERRNO | uint32(unix.ENOSYS)},
+	}
+	for name, tc := range cases {
+		if got := runBPF(t, prog, tc.data); got != tc.want {
+			t.Errorf("%s: got %#x, want %#x", name, got, tc.want)
+		}
+	}
+
+	// An app that really creates namespaces was given CAP_SYS_ADMIN by
+	// the profiler, and keeps unrestricted clone.
+	c = Config{Mode: Policy, Syscalls: []string{"clone", "read"}, Caps: []string{"CAP_SYS_ADMIN"}}
+	f, _ = c.SeccompFilter()
+	if got := runBPF(t, compile(t, f), call("clone", unix.CLONE_NEWUSER)); got != retAllow {
+		t.Errorf("with CAP_SYS_ADMIN: clone(CLONE_NEWUSER) = %#x, want allow", got)
+	}
+	// No clone at all in the policy: none is added.
+	c = Config{Mode: Policy, Syscalls: []string{"read"}}
+	f, _ = c.SeccompFilter()
+	if got := runBPF(t, compile(t, f), call("clone", 0)); got != retEPERM {
+		t.Errorf("clone not profiled: got %#x, want EPERM", got)
+	}
+}
+
 func TestUnknownSyscallRejected(t *testing.T) {
 	f := &Filter{Default: ActEPERM, Rules: []Rule{{Name: "no_such_syscall", Action: ActAllow}}}
 	if _, err := f.Compile(); err == nil {

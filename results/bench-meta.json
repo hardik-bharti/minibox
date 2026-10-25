@@ -1,0 +1,5 @@
+{
+  "env": "minibox-dev, kernel 7.0.0-38-generic, 4 vCPUs, 2026-10-25 16:36 UTC",
+  "reps": 5,
+  "duration": 10
+}

@@ -1,0 +1,8 @@
+profile,syscalls,pct_of_docker,not_in_docker,capabilities,writable_paths
+docker-default (baseline),309,100.0,,14,all (rw root)
+attack-probe,42,13.6,,0,/tmp
+busybox-http,28,9.1,,0,
+cpu-python,31,10.0,,0,
+python-http,49,15.9,,0,
+startup,11,3.6,,0,
+syscall-dd,19,6.1,,0,

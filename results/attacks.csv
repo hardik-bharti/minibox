@@ -1,0 +1,52 @@
+attack,description,config,result,exit_code,detail
+mount,mount a filesystem (tmpfs on /mnt),none,ALLOWED,1,mount tmpfs on /mnt succeeded
+mount,mount a filesystem (tmpfs on /mnt),baseline,BLOCKED,0,mount tmpfs on /mnt: operation not permitted
+mount,mount a filesystem (tmpfs on /mnt),policy,BLOCKED,0,mount tmpfs on /mnt: operation not permitted
+unshare,create a user namespace to regain all capabilities,none,ALLOWED,1,clone(CLONE_NEWUSER|CLONE_NEWNS) succeeded
+unshare,create a user namespace to regain all capabilities,baseline,BLOCKED,0,clone(CLONE_NEWUSER|CLONE_NEWNS): fork/exec /bin/true: operation not permitted
+unshare,create a user namespace to regain all capabilities,policy,BLOCKED,0,clone(CLONE_NEWUSER|CLONE_NEWNS): fork/exec /bin/true: operation not permitted
+kernel-module,load a kernel module (init_module),none,BLOCKED,0,init_module: operation not permitted
+kernel-module,load a kernel module (init_module),baseline,BLOCKED,0,init_module: operation not permitted
+kernel-module,load a kernel module (init_module),policy,BLOCKED,0,init_module: operation not permitted
+ptrace,ptrace-attach to a sibling process,none,ALLOWED,1,attached to sibling 10
+ptrace,ptrace-attach to a sibling process,baseline,BLOCKED,0,PTRACE_ATTACH to sibling 10: operation not permitted
+ptrace,ptrace-attach to a sibling process,policy,BLOCKED,0,PTRACE_ATTACH to sibling 10: operation not permitted
+sysrq,open /proc/sysrq-trigger for writing,none,BLOCKED,0,open /proc/sysrq-trigger for writing (nothing written): open /proc/sysrq-trigger: permission denied
+sysrq,open /proc/sysrq-trigger for writing,baseline,BLOCKED,0,open /proc/sysrq-trigger for writing (nothing written): open /proc/sysrq-trigger: permission denied
+sysrq,open /proc/sysrq-trigger for writing,policy,BLOCKED,0,open /proc/sysrq-trigger for writing (nothing written): open /proc/sysrq-trigger: permission denied
+proc-sys,write /proc/sys/net/ipv4/ip_forward,none,ALLOWED,1,write /proc/sys/net/ipv4/ip_forward succeeded
+proc-sys,write /proc/sys/net/ipv4/ip_forward,baseline,BLOCKED,0,write /proc/sys/net/ipv4/ip_forward: open /proc/sys/net/ipv4/ip_forward: read-only file system
+proc-sys,write /proc/sys/net/ipv4/ip_forward,policy,BLOCKED,0,write /proc/sys/net/ipv4/ip_forward: open /proc/sys/net/ipv4/ip_forward: read-only file system
+kernel-info,read host kernel info (/proc/interrupts),none,ALLOWED,1,read 2456 bytes of host interrupt counters
+kernel-info,read host kernel info (/proc/interrupts),baseline,BLOCKED,0,/proc/interrupts is empty (masked)
+kernel-info,read host kernel info (/proc/interrupts),policy,BLOCKED,0,/proc/interrupts is empty (masked)
+fork-bomb,hold 500 processes (bounded fork bomb),none,ALLOWED,1,held 500 processes
+fork-bomb,hold 500 processes (bounded fork bomb),baseline,BLOCKED,0,"started 58/500 processes, then: fork/exec /bin/sleep: resource temporarily unavailable [1 fork(s) refused by --pids 64]"
+fork-bomb,hold 500 processes (bounded fork bomb),policy,BLOCKED,0,"started 59/500 processes, then: fork/exec /bin/sleep: resource temporarily unavailable [1 fork(s) refused by --pids 64]"
+memory,allocate and touch 1 GiB,none,ALLOWED,1,allocated and touched 1 GiB
+memory,allocate and touch 1 GiB,baseline,BLOCKED,137,killed: 1 process(es) killed for exceeding --memory 256m
+memory,allocate and touch 1 GiB,policy,BLOCKED,137,killed: 1 process(es) killed for exceeding --memory 256m
+raw-socket,open a raw socket (SOCK_RAW),none,ALLOWED,1,"socket(AF_INET, SOCK_RAW) succeeded"
+raw-socket,open a raw socket (SOCK_RAW),baseline,ALLOWED,1,"socket(AF_INET, SOCK_RAW) succeeded"
+raw-socket,open a raw socket (SOCK_RAW),policy,BLOCKED,0,"socket(AF_INET, SOCK_RAW): operation not permitted"
+hostname,change the hostname (sethostname),none,ALLOWED,1,sethostname succeeded
+hostname,change the hostname (sethostname),baseline,BLOCKED,0,sethostname: operation not permitted
+hostname,change the hostname (sethostname),policy,BLOCKED,0,sethostname: operation not permitted
+clock,set the system clock (clock_settime),none,BLOCKED,0,clock_settime(CLOCK_REALTIME): operation not permitted
+clock,set the system clock (clock_settime),baseline,BLOCKED,0,clock_settime(CLOCK_REALTIME): operation not permitted
+clock,set the system clock (clock_settime),policy,BLOCKED,0,clock_settime(CLOCK_REALTIME): operation not permitted
+keyring,add a key to the kernel keyring,none,ALLOWED,1,add_key created key 934120997 (revoked)
+keyring,add a key to the kernel keyring,baseline,BLOCKED,0,add_key: operation not permitted
+keyring,add a key to the kernel keyring,policy,BLOCKED,0,add_key: operation not permitted
+bpf,use bpf() (BPF_MAP_CREATE),none,BLOCKED,0,bpf(BPF_MAP_CREATE): operation not permitted
+bpf,use bpf() (BPF_MAP_CREATE),baseline,BLOCKED,0,bpf(BPF_MAP_CREATE): operation not permitted
+bpf,use bpf() (BPF_MAP_CREATE),policy,BLOCKED,0,bpf(BPF_MAP_CREATE): operation not permitted
+mknod,create a block device node for the host disk,none,BLOCKED,0,mknod block device 8:0: operation not permitted
+mknod,create a block device node for the host disk,baseline,BLOCKED,0,mknod block device 8:0: operation not permitted
+mknod,create a block device node for the host disk,policy,BLOCKED,0,mknod block device 8:0: operation not permitted
+chroot-escape,classic chroot + '..' escape to the host fs,none,BLOCKED,0,"chroot worked, but "".."" stops at the container root (/home/hardik not found)"
+chroot-escape,classic chroot + '..' escape to the host fs,baseline,BLOCKED,0,"chroot worked, but "".."" stops at the container root (/home/hardik not found)"
+chroot-escape,classic chroot + '..' escape to the host fs,policy,BLOCKED,0,chroot: operation not permitted
+other-container,read another container's files,none,BLOCKED,0,other container invisible: /tmp/minibox-other-t6r2h7sm/1c4aedcd7c63: no such file or directory; no /proc/*/root/secret
+other-container,read another container's files,baseline,BLOCKED,0,other container invisible: /tmp/minibox-other-t6r2h7sm/1c4aedcd7c63: no such file or directory; no /proc/*/root/secret
+other-container,read another container's files,policy,BLOCKED,0,other container invisible: /tmp/minibox-other-t6r2h7sm/1c4aedcd7c63: operation not permitted; no /proc/*/root/secret

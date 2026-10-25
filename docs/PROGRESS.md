@@ -2,10 +2,32 @@
 
 ## Current phase
 
-**Phase 6 (evaluation): in progress.** Phase 5 is done. The user asked
+**Phase 7 (write-up): in progress.** Phase 6 is done. The user asked
 (2026-10-25) for Phases 3-7 in one go, with no stop between phases.
 
 ## Done
+
+### Phase 6: Evaluation (2026-10-25)
+- Attack suite: `tests/attacks/probe` (17 attacks, static Go binary mounted
+  read-only) and `tests/attacks/run.py` (none / baseline+limits /
+  policy+limits). Results: none 7/17 blocked, baseline 16/17 (raw socket
+  allowed via Docker's default CAP_NET_RAW), policy 17/17. See
+  `results/attacks.md`.
+- **Finding:** a name-only allowlist let `clone(CLONE_NEWUSER)` through, so
+  the unshare attack succeeded under policy. Fixed with Docker's rule
+  (`clone` without namespace flags, `clone3` gets ENOSYS) unless the policy
+  has CAP_SYS_ADMIN.
+- Benchmarks: `bench/run.py` with `tools/loadgen` (startup, cpu-python,
+  syscall-dd, python-http, busybox-http), 5 reps (30 for startup),
+  interleaved, with warm-up, mean/sd/median. `--report-only` regenerates
+  tables from the CSV.
+- Syscall counts: `tools/policystats` (Docker baseline vs generated
+  policies). `scripts/update-docs-results.py` copies the generated tables
+  into docs between markers.
+- Harness bugs fixed along the way: unread stderr pipe blocked http.server
+  (now goes to a file), and HTTP concurrency of 8 hit tiny listen backlogs
+  (1 s SYN retries, seen even on the bare host), so we use 1 client.
+- `make attacks`, `make bench`, `make bench-image`.
 
 ### Phase 5: Profiling and policy enforcement (2026-10-25)
 - `minibox profile [run flags] [-o policy.json] [--merge] <rootfs> <cmd>`
@@ -131,8 +153,8 @@
 
 ## Next
 
-1. Phase 6: attack suite + benchmarks.
-2. Phase 7: write-up.
+1. Phase 7: README (architecture, results, limitations, related work),
+   how-it-works.md, viva-prep.md, team split.
 
 ## Open issues
 - If minibox itself is SIGKILLed, its container dir under

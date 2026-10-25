@@ -1,0 +1,29 @@
+{
+  "minibox_policy": 1,
+  "generated": "2026-10-25T16:24:16Z",
+  "command": [
+    "true"
+  ],
+  "syscalls": [
+    "arch_prctl",
+    "brk",
+    "getuid",
+    "mmap",
+    "mprotect",
+    "set_tid_address"
+  ],
+  "capabilities": [],
+  "writable_paths": [],
+  "observed": {
+    "syscall_counts": {
+      "arch_prctl": 2,
+      "brk": 4,
+      "getuid": 2,
+      "mmap": 2,
+      "mprotect": 4,
+      "set_tid_address": 2
+    },
+    "read_paths": [],
+    "written_paths": []
+  }
+}
