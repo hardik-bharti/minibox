@@ -6,11 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"syscall"
 
 	"golang.org/x/sys/unix"
 
 	"github.com/hardik-bharti/minibox/internal/network"
+	"github.com/hardik-bharti/minibox/internal/security"
 )
 
 // configFD is the file descriptor on which the child receives its Config.
@@ -96,10 +96,11 @@ func execCommand(c *Config) error {
 	if err != nil {
 		return err
 	}
-	// Last step: no_new_privs, drop capabilities, install seccomp. After
-	// this we can't do any more setup, so nothing but execve may follow.
-	if err := c.Security.Lock(); err != nil {
+	// Last step: no_new_privs and capabilities, then the seccomp filter
+	// and execve together (security.ExecLocked explains why together).
+	prog, err := c.Security.Lock()
+	if err != nil {
 		return fmt.Errorf("apply security: %w", err)
 	}
-	return syscall.Exec(path, c.Command, env)
+	return security.ExecLocked(prog, path, c.Command, env)
 }

@@ -165,19 +165,27 @@ func readonlyRoot(writable []string) error {
 //
 // All three are per-thread, so the caller must have locked its goroutine
 // to the OS thread that will call execve.
-func (c *Config) Lock() error {
+//
+// Lock does the first two and returns the compiled seccomp program (nil
+// for --security none). The filter itself is installed by ExecLocked, in
+// the same breath as execve: see there for why.
+func (c *Config) Lock() ([]unix.SockFilter, error) {
 	if c.Mode == None {
-		return nil
+		return nil, nil
 	}
 	filter, err := c.SeccompFilter() // build before restricting anything
 	if err != nil {
-		return err
+		return nil, err
+	}
+	prog, err := filter.Compile()
+	if err != nil {
+		return nil, err
 	}
 	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
-		return fmt.Errorf("set no_new_privs: %w", err)
+		return nil, fmt.Errorf("set no_new_privs: %w", err)
 	}
 	if err := DropCaps(c.Caps); err != nil {
-		return err
+		return nil, err
 	}
-	return filter.Install()
+	return prog, nil
 }

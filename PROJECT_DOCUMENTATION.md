@@ -794,7 +794,7 @@ minibox/
 | Loopback up | `internal/network/loopback.go` : `BringUpLoopback` |
 | slirp4netns, port forwards | `internal/network/slirp.go` : `StartSlirp`, `addPort` |
 | Capability dropping | `internal/security/caps.go` : `DropCaps` |
-| BPF compiler, filter install | `internal/security/seccomp.go` : `Compile`, `compileArg`, `Install` |
+| BPF compiler, filter install + exec | `internal/security/seccomp.go` : `Compile`, `compileArg`, `ExecLocked` |
 | Docker profile interpretation | `internal/security/docker.go` : `DockerFilter` |
 | Masked/read-only paths | `internal/security/paths.go` : `MaskPaths`, `BindReadonly`, `RemountReadonly` |
 | Policy filter + clone rule, read-only root, `Lock` | `internal/security/apply.go` : `policyFilter`, `readonlyRoot`, `Lock` |

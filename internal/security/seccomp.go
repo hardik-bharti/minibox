@@ -3,6 +3,7 @@ package security
 import (
 	"fmt"
 	"sort"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -259,24 +260,50 @@ func compileArg(a ArgCmp) ([]unix.SockFilter, error) {
 	return nil, fmt.Errorf("unsupported comparison %d", a.Op)
 }
 
-// Install loads the filter for the calling thread. The caller must have
-// set no_new_privs first (or hold CAP_SYS_ADMIN): otherwise a process
-// could install a filter that confuses a setuid program it then runs.
+// ExecLocked installs prog (if any) on the calling thread and then execs
+// path, as two back-to-back raw system calls. On success it never returns.
+//
+// Why not install the filter first and call syscall.Exec afterwards? Once
+// the filter is on, *any* syscall this thread makes must be in the
+// allowlist, including the Go runtime's own. unix.Syscall returns through
+// the scheduler (exitsyscall), which may call futex to wake another
+// thread; syscall.Exec allocates first, and an allocation can start GC
+// work that also uses futex. A policy for a program that never uses futex
+// (a busybox shell, say) then makes the runtime crash before the command
+// even starts. We saw this in about 1 run in 20. RawSyscall skips the
+// scheduler hooks, and every pointer execve needs is built beforehand, so
+// no Go code runs between the two calls.
+//
+// The caller must have set no_new_privs (seccomp requires it unless we
+// hold CAP_SYS_ADMIN, so that a filter can't confuse a setuid program) and
+// locked its goroutine to this OS thread.
 //
 // We deliberately do not pass SECCOMP_FILTER_FLAG_TSYNC. The filter only
-// needs to be on the thread that is about to execve: exec discards all
-// other threads, and the new program inherits this thread's filter. Go
-// runtime threads (which may make syscalls the policy doesn't allow)
-// are left alone for the few microseconds until the exec.
-func (f *Filter) Install() error {
-	prog, err := f.Compile()
+// needs to be on the thread that execs: exec discards all other threads,
+// and the new program inherits this thread's filter.
+func ExecLocked(prog []unix.SockFilter, path string, argv, env []string) error {
+	pathp, err := syscall.BytePtrFromString(path)
 	if err != nil {
 		return err
 	}
-	fprog := unix.SockFprog{Len: uint16(len(prog)), Filter: &prog[0]}
-	_, _, errno := unix.Syscall(unix.SYS_SECCOMP, unix.SECCOMP_SET_MODE_FILTER, 0, uintptr(unsafe.Pointer(&fprog)))
-	if errno != 0 {
-		return fmt.Errorf("seccomp(SET_MODE_FILTER): %w", errno)
+	argvp, err := syscall.SlicePtrFromStrings(argv)
+	if err != nil {
+		return err
 	}
-	return nil
+	envp, err := syscall.SlicePtrFromStrings(env)
+	if err != nil {
+		return err
+	}
+	if len(prog) > 0 {
+		fprog := unix.SockFprog{Len: uint16(len(prog)), Filter: &prog[0]}
+		_, _, errno := unix.RawSyscall(unix.SYS_SECCOMP, unix.SECCOMP_SET_MODE_FILTER, 0, uintptr(unsafe.Pointer(&fprog)))
+		if errno != 0 {
+			return fmt.Errorf("seccomp(SET_MODE_FILTER): %w", errno)
+		}
+	}
+	_, _, errno := unix.RawSyscall(unix.SYS_EXECVE, uintptr(unsafe.Pointer(pathp)),
+		uintptr(unsafe.Pointer(&argvp[0])), uintptr(unsafe.Pointer(&envp[0])))
+	// Only reached if execve failed. The filter is on now, so even
+	// reporting the error may be denied; init then exits with 127.
+	return fmt.Errorf("execve %s: %w", path, errno)
 }
