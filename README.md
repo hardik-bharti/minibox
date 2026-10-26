@@ -1,31 +1,71 @@
+<div align="center">
+
 # minibox
 
-A rootless Linux container runtime written in Go, with **automatic
-least-privilege hardening**: `minibox profile` traces what an application
-actually does and writes a policy, and `minibox run --policy` enforces exactly
-that: only the syscalls it used, only the capabilities it needed, and a
-read-only filesystem except where it wrote.
+**A rootless Linux container runtime that learns what your app needs, then locks it down to exactly that.**
 
-Built from scratch as an Operating Systems course project. It covers namespaces,
-cgroups v2, overlayfs, pivot_root, user-mode networking, capabilities, seccomp-BPF
-and ptrace. No root needed at any point.
+[![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)](go.mod)
+[![Platform](https://img.shields.io/badge/platform-Linux%20x86__64-informational?logo=linux&logoColor=white)](#requirements)
+[![Rootless](https://img.shields.io/badge/root-not%20required-success)](#how-it-works)
+[![cgroups](https://img.shields.io/badge/cgroups-v2-blueviolet)](docs/phase2-cgroups.md)
+[![Seccomp](https://img.shields.io/badge/seccomp-own%20BPF%20compiler-orange)](docs/phase4-security.md)
 
-- **Run** containers: 6 namespaces, overlay root, cgroup limits, optional network.
-- **Harden** them by default like Docker: default capability set, Docker's seccomp
-  profile compiled by our own BPF compiler, masked `/proc`/`/sys` paths,
-  no_new_privs.
-- **Profile → enforce**: generate a per-application policy that cuts the allowed
-  syscalls to a small fraction of Docker's (see [Results](#results)).
-- **Evaluate**: 17 attacks under three configurations, plus overhead benchmarks.
-  Every number in this README comes from a script you can re-run.
+[Highlights](#highlights) ·
+[How it works](#how-it-works) ·
+[Quick start](#quick-start) ·
+[Demo](#demo) ·
+[Usage](#usage) ·
+[Results](#results) ·
+[Limitations](#limitations) ·
+[Related work](#related-work) ·
+[Docs](#documentation)
 
-## Contents
+</div>
 
-[Architecture](#architecture) · [Quick start](#quick-start) · [Demo](#demo) ·
-[Usage](#usage) · [Results](#results) · [Limitations](#limitations) ·
-[Related work](#related-work) · [Documentation](#documentation)
+---
 
-## Architecture
+Most containers run with a generic security profile: the same few hundred
+syscalls and the same capabilities whatever the application. minibox runs
+containers **without root** and adds a two-step workflow to give each app
+only what it uses:
+
+```sh
+minibox profile -o app.json images/alpine ./my-app    # 1. watch what the app actually does
+minibox run --policy app.json images/alpine ./my-app  # 2. allow only that, deny everything else
+```
+
+The generated policy is a seccomp allowlist with default deny, the minimal
+capability set, and a read-only root filesystem with the observed write
+locations as the only exceptions.
+
+minibox started as an Operating Systems course project. It's written from
+scratch in Go using only the standard library and `golang.org/x/sys/unix`.
+
+## Highlights
+
+| | |
+|---|---|
+| **Rootless from start to finish** | User namespaces, delegated cgroups and user-mode networking. No `sudo` and no setuid helpers. |
+| **Real isolation** | 6 namespaces (user, mount, PID, UTS, IPC, net), an overlayfs root, `pivot_root`, and fresh `/proc` and `/sys`. |
+| **Resource limits** | cgroups v2 memory, CPU and PID limits. The container is born inside its cgroup via `clone3(CLONE_INTO_CGROUP)`. |
+| **Networking** | `--net bridge` gives outbound NAT, DNS and published ports via slirp4netns. `--net none` is the default. |
+| **Docker-grade baseline** | Docker's default capabilities and its unmodified seccomp profile, compiled to BPF by **our own compiler**. Masked `/proc` and `/sys` paths and `no_new_privs`. |
+| **Profile → enforce** | A ptrace tracer records syscalls, file reads/writes and capability needs, then writes a least-privilege `policy.json`. |
+| **Measured, not claimed** | 17 attacks are run under 3 configurations, plus overhead benchmarks. Every number in this README is produced by a script in the repo. |
+
+## How it works
+
+A container is an ordinary Linux process. The kernel shows it a restricted
+view of the system and limits what it can do. minibox sets up that view and
+those limits, then replaces itself with your command.
+
+| Question | Kernel feature | Code |
+|----------|----------------|------|
+| What can it **see**? | namespaces, overlayfs, `pivot_root` | [`internal/container`](internal/container) |
+| How much can it **use**? | cgroups v2 | [`internal/cgroups`](internal/cgroups) |
+| Who can it **talk to**? | network namespace + slirp4netns | [`internal/network`](internal/network) |
+| What may it **do**? | capabilities, seccomp-BPF, masked/read-only mounts, `no_new_privs` | [`internal/security`](internal/security) |
+| What does it actually **need**? | ptrace | [`internal/profile`](internal/profile) |
 
 ```mermaid
 flowchart TB
@@ -56,71 +96,116 @@ flowchart TB
     TR -- "writes" --> POL
 ```
 
-| Package | OS concepts | Phase |
-|---------|-------------|-------|
-| `internal/container` | user/mount/PID/UTS/IPC/net namespaces, overlayfs, pivot_root, procfs/sysfs, bind mounts | 1 |
-| `internal/cgroups` | cgroup v2, systemd delegation, `CLONE_INTO_CGROUP` | 2 |
-| `internal/network` | network namespace, loopback ioctl, slirp4netns (user-mode TCP/IP) | 3 |
-| `internal/security` | capabilities (bounding set), seccomp-BPF compiler, Docker profile, masked paths, no_new_privs, policy enforcement | 4, 5 |
-| `internal/profile` | ptrace (`PTRACE_GET_SYSCALL_INFO`, fork following), `/proc/<pid>/mem`, policy generation | 5 |
-| `tests/attacks`, `bench`, `tools` | attack probe, harnesses, load generator, profile statistics | 6 |
+<details>
+<summary><b>What happens during <code>minibox run</code>, step by step</b></summary>
 
-Plain-language tour of every concept and where it lives in the code:
+1. **Host side.** minibox re-runs itself in a delegated systemd scope, if
+   needed, and creates a cgroup with your limits and a state directory.
+2. **clone.** It starts `/proc/self/exe init` in new user, mount, PID, UTS,
+   IPC and network namespaces, directly inside the cgroup. Container UID 0
+   maps to your UID.
+3. **Network.** With `--net bridge`, slirp4netns attaches a `tap0` device
+   to the new network namespace.
+4. **Filesystem.** init mounts the overlay (image = read-only lower layer),
+   `/dev`, `/proc` and `/sys`, then calls `pivot_root` and detaches the old
+   root.
+5. **Lock down.** init masks sensitive paths, remounts the root read-only
+   (policy mode), sets `no_new_privs`, drops capabilities and installs the
+   seccomp filter.
+6. **exec.** init calls `execve` on your command, which becomes PID 1.
+7. **Cleanup.** The host side waits, forwards signals, reports
+   OOM kills and refused forks, and removes the cgroup, slirp4netns and the
+   state directory.
+
+</details>
+
+Plain-language explanation of every concept, with pointers into the code:
 **[docs/how-it-works.md](docs/how-it-works.md)**.
 
 ## Quick start
 
-Requirements: Linux ≥ 5.11 with cgroups v2 and unprivileged user namespaces
-(developed on Ubuntu 26.04.1, kernel 7.0, in VirtualBox), Go 1.27+. Optional:
-`slirp4netns` for `--net bridge`. `make check-env` checks all of this and says how
-to fix what's missing.
+### Requirements
+
+- Linux ≥ 5.11, x86_64, with **cgroups v2** and **unprivileged user namespaces**.
+  On Ubuntu 24.04+ this also needs `kernel.apparmor_restrict_unprivileged_userns=0`.
+- Go 1.27+
+- Optional: `slirp4netns` for `--net bridge`
+
+Development and testing used Ubuntu Server 26.04.1 (kernel 7.0) in VirtualBox.
+
+### Build and check
 
 ```sh
-make check-env     # verify kernel/VM features
-make image         # download Alpine minirootfs -> images/alpine (SHA-256 verified)
-make build         # bin/minibox
+git clone https://github.com/hardik-bharti/minibox.git && cd minibox
+make check-env     # checks kernel features and explains how to fix anything missing
+make image         # downloads the Alpine minirootfs into images/alpine (SHA-256 verified)
+make build         # -> bin/minibox
 make test          # unit tests
-make smoke         # end-to-end checks of every phase in this VM
+make smoke         # end-to-end checks of every feature, in this machine
 ```
 
-For the evaluation:
+### Your first container
 
 ```sh
-make bench-image   # images/bench = Alpine + python3 + busybox httpd (apk --root via a volume)
-make attacks       # results/attacks.{csv,md}
-make bench         # results/bench.{csv,md}, results/syscalls.{csv,md} (about 10 minutes)
+$ ./bin/minibox run --hostname demo images/alpine sh -c 'id -u; hostname; cat /proc/self/uid_map'
+0
+demo
+         0       1000          1
 ```
+
+You're root inside the container (UID 0) and still yourself outside it
+(UID 1000).
 
 ## Demo
 
 ```sh
 B=./bin/minibox
 
-# 1. Isolation: root inside, you outside; own PIDs, hostname, filesystem
-$B run --hostname demo images/alpine sh -c 'id; hostname; ps; cat /proc/self/uid_map'
+# Isolation: own PIDs, hostname and filesystem
+$B run --hostname demo images/alpine sh -c 'id; hostname; ps'
 
-# 2. Resource limits: a memory hog is OOM-killed, a fork tree is capped
+# Resource limits: a memory hog is OOM-killed, a fork tree is capped
 $B run --memory 50m --stats images/alpine dd if=/dev/zero of=/dev/null bs=200M count=1
 $B run --pids 20 --stats images/alpine sh -c 'for i in $(seq 50); do sleep 1 & done; wait'
 
-# 3. Networking: none by default; bridge = rootless outbound + published ports
+# Networking: none by default; bridge = rootless outbound + published ports
 $B run images/alpine ip addr
 $B run --net bridge images/alpine wget -qO- http://example.com | head -3
 
-# 4. Baseline security: the same command, unhardened vs default
+# Baseline security: the same command, unhardened vs default
 $B run --security none images/alpine mount -t tmpfs x /mnt && echo "mount allowed"
-$B run images/alpine mount -t tmpfs x /mnt          # permission denied
+$B run images/alpine mount -t tmpfs x /mnt          # mount: permission denied
 $B run images/alpine grep -E 'CapEff|Seccomp|NoNewPrivs' /proc/self/status
+```
 
-# 5. Profile -> enforce
-$B profile -o demo.json images/alpine sh -c 'echo hi > /tmp/f && echo saved'
-head -30 demo.json                       # a short syscall list, no capabilities, writable: /tmp
-$B run --policy demo.json images/alpine sh -c 'echo hi > /tmp/f && echo saved'                  # saved
-$B run --policy demo.json images/alpine sh -c 'echo x > /etc/f 2>/dev/null || echo "blocked: read-only"'
-$B run --policy demo.json images/alpine sh -c 'ls / >/dev/null 2>&1 || echo "blocked: syscalls not in policy"'
+### Profile → enforce
 
-# 6. Evaluation
-make attacks && cat results/attacks.md
+```sh
+$ $B profile -o demo.json images/alpine sh -c 'echo hi > /tmp/f && echo saved'
+saved
+minibox profile: 16 syscalls, 0 capabilities [], 1 writable paths [/tmp] -> demo.json
+
+$ $B run --policy demo.json images/alpine sh -c 'echo hi > /tmp/f && echo saved'
+saved
+$ $B run --policy demo.json images/alpine sh -c 'echo x > /etc/f 2>/dev/null || echo "blocked: read-only"'
+blocked: read-only
+$ $B run --policy demo.json images/alpine sh -c 'ls / >/dev/null 2>&1 || echo "blocked: syscalls not in policy"'
+blocked: syscalls not in policy
+```
+
+The generated policy (`observed` section shortened):
+
+```json
+{
+  "minibox_policy": 1,
+  "command": ["sh", "-c", "echo hi > /tmp/f && echo saved"],
+  "syscalls": ["arch_prctl", "brk", "close", "dup2", "fcntl", "getcwd", "getpid", "getppid",
+               "getuid", "mmap", "mprotect", "open", "rt_sigaction", "rt_sigprocmask",
+               "set_tid_address", "write"],
+  "capabilities": [],
+  "writable_paths": ["/tmp"],
+  "observed": { "syscall_counts": { "...": 0 }, "read_paths": [], "written_paths": ["/tmp"] }
+}
 ```
 
 ## Usage
@@ -130,12 +215,13 @@ minibox run     [flags] <rootfs> <cmd> [args...]
 minibox profile [flags] [-o policy.json] [--merge] <rootfs> <cmd> [args...]
 ```
 
-Flags go **before** the rootfs. Everything after the command belongs to the command.
+Flags go **before** the rootfs. Everything after the command is passed to
+the command.
 
 | Flag | Meaning |
 |------|---------|
 | `--hostname NAME` | Container hostname (default: the container ID) |
-| `--memory SIZE` | Memory limit (`64m`, `1g`); swap disabled; exceeding it gets the process OOM-killed |
+| `--memory SIZE` | Memory limit (`64m`, `1g`). Swap is disabled. Going over gets the process OOM-killed. |
 | `--cpus N` | CPU limit, e.g. `0.5` |
 | `--pids N` | Max processes + threads (minimum 8) |
 | `--stats` | Print cgroup usage (CPU, memory peak, OOM kills, pids) on exit |
@@ -144,24 +230,43 @@ Flags go **before** the rootfs. Everything after the command belongs to the comm
 | `-v HOST:CONTAINER[:ro]` | Bind-mount a host directory (repeatable) |
 | `--security baseline\|none` | `baseline` (default): Docker-like hardening. `none`: namespaces only |
 | `--policy FILE` | Enforce a generated policy (instead of `--security`) |
-| `-o FILE`, `--merge` | *profile only*: output file; union with an existing policy to combine runs |
+| `-o FILE`, `--merge` | *profile only*: output file, and merging with an existing policy to combine several runs |
 
-Exit status: the command's exit code, `128+N` if killed by signal N, `127` if
-setup failed. Ctrl-C is forwarded to the container; press it again to force-kill.
-State lives in `~/.local/share/minibox/containers/<id>` (override with
-`MINIBOX_ROOT`) and is deleted on exit.
+**Exit status:** the command's exit code, `128+N` if killed by signal N, or
+`127` if setup failed. Ctrl-C is forwarded to the container. Press it again
+to force-kill. State lives in `~/.local/share/minibox/containers/<id>`
+(override with `MINIBOX_ROOT`) and is deleted on exit.
 
 ## Results
 
-Generated on the development VM (Ubuntu 26.04.1, kernel 7.0, 4 vCPUs in
-VirtualBox). Re-run with `make attacks` / `make bench`. The tables below are
-copied in by `scripts/update-docs-results.py` and never edited by hand. Full
-analysis, method and threats to validity: **[docs/phase6-evaluation.md](docs/phase6-evaluation.md)**.
+All results come from the development VM (Ubuntu 26.04.1, kernel 7.0, 4
+vCPUs in VirtualBox). Re-run them with:
+
+```sh
+make bench-image   # images/bench = Alpine + python3 + busybox httpd
+make attacks       # -> results/attacks.{csv,md}
+make bench         # -> results/bench.{csv,md}, results/syscalls.{csv,md}  (about 10 minutes)
+```
+
+`scripts/update-docs-results.py` copies the tables below in from `results/`.
+They are never edited by hand. Method, analysis and threats to validity:
+**[docs/phase6-evaluation.md](docs/phase6-evaluation.md)**.
 
 ### Attack suite: 17 attacks × 3 configurations
 
-*none* = namespaces only; *baseline* = Phase 4 defaults + `--pids 64 --memory 256m`;
+*none* = namespaces only · *baseline* = default hardening + `--pids 64 --memory 256m` ·
 *policy* = policy generated by profiling a benign service + the same limits.
+
+<!-- results:attacks-summary -->
+| Config | Blocked | Allowed | Error |
+|---|---|---|---|
+| none | 7/17 | 10 | 0 |
+| baseline | 16/17 | 1 | 0 |
+| policy | 17/17 | 0 | 0 |
+<!-- /results:attacks-summary -->
+
+<details>
+<summary><b>Per-attack results</b></summary>
 
 <!-- results:attacks-matrix -->
 | # | Attack | none | baseline | policy |
@@ -185,21 +290,15 @@ analysis, method and threats to validity: **[docs/phase6-evaluation.md](docs/pha
 | 17 | read another container's files (`other-container`) | BLOCKED | BLOCKED | BLOCKED |
 <!-- /results:attacks-matrix -->
 
-<!-- results:attacks-summary -->
-| Config | Blocked | Allowed | Error |
-|---|---|---|---|
-| none | 7/17 | 10 | 0 |
-| baseline | 16/17 | 1 | 0 |
-| policy | 17/17 | 0 | 0 |
-<!-- /results:attacks-summary -->
+</details>
 
-Rootless namespaces alone already stop attacks that need init-namespace
-privilege (kernel modules, clock, bpf, device nodes). The baseline stops
-everything else except raw sockets (Docker keeps `CAP_NET_RAW`). The generated
-policy also blocks those. While building the suite, it caught a real weakness
-in our first policy design: a name-only allowlist let
-`clone(CLONE_NEWUSER)` through. See
-[the write-up](docs/phase6-evaluation.md#a-weakness-the-suite-found-and-the-fix).
+- **Rootless namespaces alone** stop attacks that need privilege in the
+  initial namespace (kernel modules, clock, bpf, device nodes).
+- **Baseline** stops everything else except raw sockets, because Docker keeps `CAP_NET_RAW`.
+- **Generated policy** also blocks raw sockets. While building the suite, it caught a real
+  weakness in our first policy design: a name-only allowlist let
+  `clone(CLONE_NEWUSER)` through. See
+  [the write-up](docs/phase6-evaluation.md#a-weakness-the-suite-found-and-the-fix).
 
 ### Attack surface: allowed syscalls
 
@@ -216,6 +315,14 @@ in our first policy design: a name-only allowlist let
 <!-- /results:syscalls -->
 
 ### Overhead
+
+In short: there's no measurable cost for the web servers, and startup takes
+about a millisecond longer. The only measurable per-syscall cost is in the
+deliberately syscall-bound `dd` worst case. There, by median, policy is no
+worse than baseline.
+
+<details>
+<summary><b>Full benchmark table</b> (mean ± sd, median, overhead vs <i>none</i>)</summary>
 
 <!-- results:bench -->
 Environment: minibox-dev, kernel 7.0.0-38-generic, 4 vCPUs, 2026-10-25 16:36 UTC. Repetitions per cell: 5 (HTTP: 10 s of load each after 1 s warm-up, 1 client, new connection per request, through slirp4netns in every config).
@@ -239,56 +346,78 @@ Cells: mean ± sample standard deviation, then the median. *Overhead* compares e
 | busybox-http | lat_p99_ms (ms) | 0.81 ± 0.05 (med 0.81) | 0.80 ± 0.04 (med 0.80) | 0.83 ± 0.02 (med 0.83) | -1.8% / -0.7% | +2.7% / +2.9% |
 <!-- /results:bench -->
 
-In short: no measurable cost for the web servers. About a millisecond more
-startup. A measurable per-syscall cost only in the deliberately syscall-bound
-`dd` worst case, where policy is no worse than baseline by median.
+</details>
+
+## Project layout
+
+```
+cmd/minibox/          CLI: run, profile, flag parsing
+internal/container/   namespaces, overlayfs, /dev /proc /sys, pivot_root, exec, cleanup
+internal/cgroups/     cgroup v2 limits, systemd delegation, usage stats
+internal/network/     loopback, slirp4netns, port forwarding
+internal/security/    capabilities, seccomp-BPF compiler, Docker profile, masked paths, policies
+internal/profile/     ptrace tracer, recorder, policy generation
+tests/smoke.sh        end-to-end checks for every phase
+tests/attacks/        attack probe + runner (17 attacks × 3 configs)
+bench/  tools/        benchmark harness, load generator, policy statistics
+scripts/              environment check, image download, result copying
+docs/                 design notes per phase, concepts, viva prep
+results/              generated CSV and Markdown results
+```
 
 ## Limitations
 
 - **Coverage of generated policies.** A policy contains only what the profiled
-  run did. Untested code paths may hit `EPERM`. Even the environment matters:
-  busybox `cat` uses `sendfile()` when stdout is a pipe or file but falls back to
-  `read()` for other stdout types, so a policy profiled one way can fail when run
-  the other way. Profile in the deployment environment, with realistic
-  workloads, and combine runs with `--merge`.
+  run did, so untested code paths may fail with `EPERM`. Even the environment
+  matters: busybox `cat` uses `sendfile()` when stdout is a pipe or a file and
+  `read()` otherwise, so a policy profiled one way can fail when run the other
+  way. Profile in the deployment environment with realistic workloads, and
+  combine runs with `--merge`.
 - **Capabilities are inferred, not observed.** ptrace can't see the kernel's
-  `capable()` checks (eBPF could, but needs root on this kernel). Each inferred
-  capability is stored with its reason for review.
-- **Name-level syscall filtering.** Policies don't filter arguments, except the
-  `clone` namespace-flag rule.
-- **Networking:** slirp4netns is slower than a kernel veth/bridge, and
+  `capable()` checks. eBPF could, but it needs root on this kernel. Each
+  inferred capability is stored with its reason so it can be reviewed.
+- **Name-level syscall filtering.** Policies don't filter arguments, except
+  for the `clone` namespace-flag rule.
+- **Networking.** slirp4netns is slower than a kernel veth/bridge, and
   containers can't reach each other. Host ports must be ≥ 1024.
-- **Single-UID containers:** only container root is mapped (no `newuidmap`).
+- **Single-UID containers.** Only container root is mapped (no `newuidmap`).
   Files owned by other UIDs in an image show up as `nobody`.
-- x86_64 only (syscall table, seccomp arch check). No OCI image or bundle
-  support: a rootfs directory is the image. No `minibox ps`/`exec`. A
-  SIGKILLed minibox leaves its state dir behind (the container itself dies).
-- Evaluation on one VM with five repetitions per cell. Compare configurations
-  with each other, not with other systems.
+- **Scope.** x86_64 only. No OCI images or bundles (a rootfs directory is the
+  image). No `ps` or `exec` commands. If minibox itself is SIGKILLed, its
+  state directory stays behind (the container still dies).
+- **Evaluation** ran on one VM with five repetitions per cell. Compare the
+  configurations with each other, not with other systems.
 
 ## Related work
 
 | Project | What it is | How minibox differs |
 |---------|------------|---------------------|
-| **Docker / runc** | Production OCI runtime. Root daemon by default, rootless mode optional. Static default seccomp profile and capability set. | minibox reuses Docker's profile and caps as its *baseline*, but is rootless-only, tiny, and adds per-application profile→enforce. Our seccomp compiler is our own (runc uses libseccomp). |
-| **Bocker** (Docker in ~100 lines of bash) | Teaching demo using `unshare`, btrfs, cgroups v1, iptables. Needs root. | Rootless, cgroups v2, overlayfs, and a security layer and evaluation that Bocker doesn't attempt. |
-| **Liz Rice, "Containers From Scratch"** | Talk/code showing namespaces + chroot + cgroups in Go. | Same starting point (Go re-exec trick), extended with pivot_root, user namespaces, networking, seccomp/caps and policy generation. |
-| **Red Hat oci-seccomp-bpf-hook** | OCI hook that records a container's syscalls with eBPF and writes a seccomp profile (Podman `--annotation`). Needs root for eBPF. | minibox records with ptrace, so no privileges. Its policy also covers capabilities and writable paths, and it's evaluated against attacks. |
-| **SlimToolkit (DockerSlim)** | Analyses a running container to shrink images, and generates seccomp and AppArmor profiles. | minibox doesn't shrink images. It focuses on enforcing least privilege in its own runtime, with a read-only root from observed writes and an attack-based evaluation. |
-| **Podman (rootless) + slirp4netns / pasta** | Production rootless runtime. | Same rootless building blocks (user namespaces, delegated cgroups, slirp4netns), at teaching scale. |
+| **Docker / runc** | Production OCI runtime. Root daemon by default, optional rootless mode. Static default seccomp profile and capability set. | Reuses Docker's profile and capabilities as its *baseline*, but is rootless-only and tiny, and adds per-application profile→enforce. Uses its own seccomp compiler, while runc uses libseccomp. |
+| **Bocker** (Docker in ~100 lines of bash) | Teaching demo built on `unshare`, btrfs, cgroups v1 and iptables. Needs root. | Rootless, with cgroups v2 and overlayfs. Adds a security layer and an evaluation. |
+| **Liz Rice, "Containers From Scratch"** | Talk and code showing namespaces, chroot and cgroups in Go. | Same starting point (the Go re-exec trick), extended with `pivot_root`, user namespaces, networking, seccomp/capabilities and policy generation. |
+| **Red Hat oci-seccomp-bpf-hook** | OCI hook that records syscalls with eBPF and writes a seccomp profile. Needs root. | Records with ptrace, so needs no privileges. Its policy also covers capabilities and writable paths, and it's evaluated against attacks. |
+| **SlimToolkit (DockerSlim)** | Analyses containers to shrink images and to generate seccomp and AppArmor profiles. | Doesn't shrink images. Enforces least privilege in its own runtime, with a read-only root built from observed writes. |
+| **Podman (rootless) + slirp4netns / pasta** | Production rootless runtime. | Same rootless building blocks, at teaching scale. |
 
 ## Documentation
 
 | Document | Contents |
 |----------|----------|
-| [PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md) | **Complete reference**: every feature, CLI, policy format, testing, results, design decisions, troubleshooting |
+| [PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md) | **Complete reference**: features, CLI, policy format, testing, results, design decisions, troubleshooting |
 | [docs/how-it-works.md](docs/how-it-works.md) | Every OS concept in plain language, with code pointers |
-| [docs/phase1-isolation.md](docs/phase1-isolation.md) | Namespaces, overlay, pivot_root, `/proc` gotcha |
+| [docs/phase1-isolation.md](docs/phase1-isolation.md) | Namespaces, overlay, `pivot_root`, the `/proc` gotcha |
 | [docs/phase2-cgroups.md](docs/phase2-cgroups.md) | cgroup v2 limits, rootless delegation |
-| [docs/phase3-networking.md](docs/phase3-networking.md) | slirp4netns vs veth (which steps need root and why) |
+| [docs/phase3-networking.md](docs/phase3-networking.md) | slirp4netns vs veth: which steps need root and why |
 | [docs/phase4-security.md](docs/phase4-security.md) | Capabilities, seccomp compiler, masked paths |
 | [docs/phase5-profiling.md](docs/phase5-profiling.md) | ptrace vs eBPF, tracer design, policy format |
 | [docs/phase6-evaluation.md](docs/phase6-evaluation.md) | Attack suite, benchmarks, analysis |
 | [docs/viva-prep.md](docs/viva-prep.md) | 20 likely examiner questions with answers |
-| [docs/team-split.md](docs/team-split.md) | Suggested split of the codebase among 3 members |
+| [docs/team-split.md](docs/team-split.md) | How the codebase splits among 3 team members |
 | [docs/PROGRESS.md](docs/PROGRESS.md) | Phase-by-phase log and open issues |
+
+## Acknowledgements
+
+minibox reuses Docker's default seccomp profile
+([moby/profiles](https://github.com/moby/profiles), embedded unmodified with
+its SHA-256 pinned) and the Alpine Linux minirootfs. It draws on ideas from
+runc, Podman's rootless networking, and Liz Rice's *Containers From Scratch*.
