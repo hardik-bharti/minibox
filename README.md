@@ -9,6 +9,7 @@
 [![Rootless](https://img.shields.io/badge/root-not%20required-success)](#how-it-works)
 [![cgroups](https://img.shields.io/badge/cgroups-v2-blueviolet)](docs/phase2-cgroups.md)
 [![Seccomp](https://img.shields.io/badge/seccomp-own%20BPF%20compiler-orange)](docs/phase4-security.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 [Highlights](#highlights) ·
 [How it works](#how-it-works) ·
@@ -421,3 +422,9 @@ minibox reuses Docker's default seccomp profile
 ([moby/profiles](https://github.com/moby/profiles), embedded unmodified with
 its SHA-256 pinned) and the Alpine Linux minirootfs. It draws on ideas from
 runc, Podman's rootless networking, and Liz Rice's *Containers From Scratch*.
+
+## License
+
+[MIT](LICENSE). The embedded Docker seccomp profile
+(`internal/security/profiles/docker-default.json`) comes from moby/profiles and
+keeps its own Apache-2.0 license.
