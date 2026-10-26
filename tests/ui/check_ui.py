@@ -46,7 +46,10 @@ def main():
                 time.sleep(0.1)
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            # The page's CSP forbids eval, which Playwright's string predicates
+            # in wait_for_function rely on; bypass it for the test only.
+            ctx = browser.new_context(viewport={"width": 1280, "height": 900}, bypass_csp=True)
+            page = ctx.new_page()
             page.on("console", lambda m: m.type == "error" and errors.append(m.text))
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.goto(URL)

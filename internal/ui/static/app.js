@@ -61,6 +61,8 @@
     $("#status-text").textContent = text;
     $("#stop").hidden = kind !== "busy";
     $$("button[data-run], #lim-run, .matrix button").forEach((b) => (b.disabled = kind === "busy"));
+    // Enforcing needs a policy; stay disabled until one exists.
+    if ($("#enf-policy option[data-placeholder]")) $("button[data-run=enforce]").disabled = true;
   }
 
   function showPanel(name) {
@@ -420,6 +422,9 @@
       } else {
         const n = Number(d.stats.nr_throttled || 0);
         state = h("span", { class: "state warn" }, `! Throttled in ${n} periods`);
+        // The last live sample can trail the final cpu.stat read by a period;
+        // show the final count in both places so the numbers agree.
+        this.last = { ...this.last, throttled: n };
       }
       this.facts(this.last, h("div", {}, h("dt", {}, "Outcome"), h("dd", {}, state)));
     },
@@ -462,6 +467,8 @@
       if (d.kind === "policy") {
         const allowed = new Set(d.allowed);
         drawGrid(allowed);
+        const none = $("#prof-caps .none");
+        if (none) none.textContent = "None needed";
         const docker = INFO.docker_syscalls;
         const extra = d.allowed.filter((x) => !docker.includes(x));
         const pct = (100 * d.allowed.length / docker.length).toFixed(1);
@@ -495,6 +502,8 @@
 
   function addPolicy(id) {
     const sel = $("#enf-policy");
+    sel.querySelector("option[data-placeholder]")?.remove();
+    $("button[data-run=enforce]").disabled = false;
     if (![...sel.options].some((o) => o.value === id)) sel.append(h("option", { value: id }, actionParam("profile", "workload").choices.find((c) => c.value === id)?.label || id));
     sel.value = id;
     $("#enf-workload").value = id;
@@ -651,6 +660,11 @@
     fillSelect($("#enf-workload"), actionParam("enforce", "workload"));
     $("#enf-policy").replaceChildren();
     for (const id of INFO.policies) if (id !== "attack-probe") addPolicy(id);
+    if (!$("#enf-policy").options.length) {
+      // Nothing to enforce until something has been profiled.
+      $("#enf-policy").append(h("option", { value: "", "data-placeholder": "" }, "Profile a program first"));
+      $("button[data-run=enforce]").disabled = true;
+    }
     $$("button[data-run]").forEach((b) => b.addEventListener("click", () => start(b.dataset.run, params(b.dataset.run))));
     $("#stop").addEventListener("click", () => post("api/stop").catch((e) => toast(e.message)));
     $$(".tabs [role=tab]").forEach((t) => t.addEventListener("click", () => showPanel(t.dataset.panel)));
@@ -658,7 +672,8 @@
     attacks.init();
     filter.init();
     drawGrid(new Set());
-    Object.keys(panels).forEach(strip);
+    // Only panels that run a command have a strip (the filter panel doesn't).
+    $$("[data-strip]").forEach((el) => strip(el.dataset.strip));
     const hash = location.hash.slice(1);
     showPanel(panels[hash] ? hash : "isolation");
     connect();

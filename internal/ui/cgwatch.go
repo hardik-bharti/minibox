@@ -20,7 +20,7 @@ type Meter struct {
 	Pids         int64   `json:"pids"`          // pids.current
 	PidsMax      int64   `json:"pids_max"`      // pids.max
 	CPUUsec      int64   `json:"cpu_usec"`      // cpu.stat usage_usec (cumulative)
-	CPUCores     float64 `json:"cpu_cores"`     // CPUs used since the previous reading
+	CPUCores     float64 `json:"cpu_cores"`     // CPUs used over the last cpuWindow
 	CPULimit     float64 `json:"cpu_limit"`     // cpu.max quota/period, in CPUs
 	Throttled    int64   `json:"throttled"`     // cpu.stat nr_throttled
 	OOMKills     int64   `json:"oom_kills"`     // memory.events oom_kill
@@ -31,6 +31,12 @@ const (
 	cgroupRoot   = "/sys/fs/cgroup"
 	meterEvery   = 100 * time.Millisecond
 	findCgroupIn = 5 * time.Second
+	// cpuWindow is the span the CPU rate is averaged over. cpu.max grants
+	// quota per 100 ms period, the same length as meterEvery, so a rate
+	// over a single reading aliases with the periods: a window that is a
+	// little short or long catches one burst more or less and shows a
+	// spike (we saw 1.2 CPUs under --cpus 0.25). Five periods smooth that.
+	cpuWindow = 500 * time.Millisecond
 )
 
 // containerCgroup finds the cgroup minibox created for its container.
@@ -83,29 +89,43 @@ func watchCgroup(ctx context.Context, pid int, send func(Meter)) {
 	}
 
 	start := time.Now()
-	var prev *Meter
+	var recent []Meter // readings in the last cpuWindow, oldest first
 	tick := time.NewTicker(meterEvery)
 	defer tick.Stop()
 	for {
+		// Timestamp before reading, so the time matches the CPU counter.
+		t := time.Since(start).Milliseconds()
 		m, err := readMeter(dir)
 		if err != nil {
 			return // cgroup removed: the container has exited
 		}
-		m.TMs = time.Since(start).Milliseconds()
-		// CPU use is a rate: CPU time used divided by wall time passed.
-		if prev != nil {
-			if dt := m.TMs - prev.TMs; dt > 0 {
-				m.CPUCores = float64(m.CPUUsec-prev.CPUUsec) / float64(dt*1000)
-			}
-		}
+		m.TMs = t
+		m.CPUCores = cpuRate(recent, m)
 		send(m)
-		prev = &m
+		recent = append(recent, m)
+		for len(recent) > 1 && m.TMs-recent[1].TMs >= cpuWindow.Milliseconds() {
+			recent = recent[1:]
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
 		}
 	}
+}
+
+// cpuRate is CPU use as a rate: CPU time used divided by wall time passed,
+// measured from the oldest reading in recent to m.
+func cpuRate(recent []Meter, m Meter) float64 {
+	if len(recent) == 0 {
+		return 0
+	}
+	old := recent[0]
+	dt := m.TMs - old.TMs
+	if dt <= 0 {
+		return 0
+	}
+	return float64(m.CPUUsec-old.CPUUsec) / float64(dt*1000)
 }
 
 // readMeter reads one Meter from cgroup directory dir.

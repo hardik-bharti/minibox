@@ -173,3 +173,16 @@ func TestHostViewHasEveryFact(t *testing.T) {
 		t.Errorf("parseKV = %v", kv)
 	}
 }
+
+// The CPU rate is measured from the oldest reading kept, so one short
+// sampling interval can't produce a spike above the real average.
+func TestCPURate(t *testing.T) {
+	if got := cpuRate(nil, Meter{TMs: 100, CPUUsec: 50_000}); got != 0 {
+		t.Fatalf("no history: got %v, want 0", got)
+	}
+	recent := []Meter{{TMs: 0, CPUUsec: 0}, {TMs: 400, CPUUsec: 100_000}}
+	// 125 ms of CPU over 500 ms of wall time is 0.25 CPUs.
+	if got := cpuRate(recent, Meter{TMs: 500, CPUUsec: 125_000}); got != 0.25 {
+		t.Fatalf("got %v, want 0.25", got)
+	}
+}

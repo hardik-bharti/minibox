@@ -206,7 +206,12 @@ Optional improvements, not started:
 ## Open issues
 - `tests/ui/check_ui.py` needs Playwright for Python (installed in
   `~/.venvs/playwright`, outside the repo) and Chromium's system libraries
-  (`sudo ~/.venvs/playwright/bin/playwright install-deps chromium`).
+  (`sudo ~/.venvs/playwright/bin/playwright install-deps chromium`, done
+  2026-10-26). It now passes; the first screenshot run found and fixed:
+  all five panels showing at once (`[hidden]` overridden by CSS), a load
+  crash on the filter panel (no command strip), CPU-chart spikes from
+  sampling at the same 100 ms as the CFS period (now a 0.5 s window), and
+  a throttle count that differed by one between two places.
 - If minibox itself is SIGKILLed, its container dir under
   `~/.local/share/minibox/containers/` is left behind (the container itself is
   killed). Possible fix later: a `minibox prune` command.

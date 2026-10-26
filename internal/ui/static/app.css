@@ -74,6 +74,9 @@ button, select { font: inherit; color: inherit; }
 .tabs button:hover { color: var(--ink); }
 
 main { padding-top: 20px; }
+/* Author display rules beat the browser's own [hidden] rule, so restate it:
+   without this every tab panel shows at once. */
+[hidden] { display: none !important; }
 .panel { display: grid; gap: 16px; }
 .intro { display: grid; gap: 6px; }
 .intro h2 { font-size: 1.45rem; font-weight: 700; }
