@@ -15,6 +15,7 @@
 [How it works](#how-it-works) ·
 [Quick start](#quick-start) ·
 [Demo](#demo) ·
+[Demo UI](#demo-ui) ·
 [Usage](#usage) ·
 [Results](#results) ·
 [Limitations](#limitations) ·
@@ -53,6 +54,7 @@ scratch in Go using only the standard library and `golang.org/x/sys/unix`.
 | **Docker-grade baseline** | Docker's default capabilities and its unmodified seccomp profile, compiled to BPF by **our own compiler**. Masked `/proc` and `/sys` paths and `no_new_privs`. |
 | **Profile → enforce** | A ptrace tracer records syscalls, file reads/writes and capability needs, then writes a least-privilege `policy.json`. |
 | **Measured, not claimed** | 17 attacks are run under 3 configurations, plus overhead benchmarks. Every number in this README is produced by a script in the repo. |
+| **See it live** | `minibox ui` is a browser dashboard that runs the real commands: live cgroup meters, syscalls appearing as a program makes them, attacks filling in a matrix, one syscall stepping through the BPF filter. |
 
 ## How it works
 
@@ -209,11 +211,32 @@ The generated policy (`observed` section shortened):
 }
 ```
 
+## Demo UI
+
+```sh
+make ui        # http://127.0.0.1:7070 inside the VM
+```
+
+A dashboard for demos and the viva, with five panels: isolation (host vs
+container, side by side), resource limits (live cgroup charts up to the
+OOM kill), profile and enforce (syscalls appearing live, the policy
+against Docker's 309), the attack suite, and one syscall traced through the
+real seccomp program. Every panel shows the exact `minibox` command it
+runs. It listens on loopback only. From the host, use
+`ssh -p 2222 -L 7070:127.0.0.1:7070 <user>@127.0.0.1` and open the same
+URL. Details and the safety design: [docs/phase8-demo-ui.md](docs/phase8-demo-ui.md).
+
+For explaining rather than demonstrating, **[docs/explainer.html](docs/explainer.html)**
+is a self-contained page. It steps through `minibox run`, traces syscalls
+through the BPF our compiler emits, and shows the attack results. Its data
+is regenerated with `make explainer`.
+
 ## Usage
 
 ```
 minibox run     [flags] <rootfs> <cmd> [args...]
-minibox profile [flags] [-o policy.json] [--merge] <rootfs> <cmd> [args...]
+minibox profile [flags] [-o policy.json] [--merge] [--events FILE] <rootfs> <cmd> [args...]
+minibox ui      [--addr 127.0.0.1:7070]
 ```
 
 Flags go **before** the rootfs. Everything after the command is passed to
@@ -232,6 +255,7 @@ the command.
 | `--security baseline\|none` | `baseline` (default): Docker-like hardening. `none`: namespaces only |
 | `--policy FILE` | Enforce a generated policy (instead of `--security`) |
 | `-o FILE`, `--merge` | *profile only*: output file, and merging with an existing policy to combine several runs |
+| `--events FILE` | *profile only*: also write live observations as JSON lines (used by `minibox ui`) |
 
 **Exit status:** the command's exit code, `128+N` if killed by signal N, or
 `127` if setup failed. Ctrl-C is forwarded to the container. Press it again
@@ -357,10 +381,12 @@ internal/container/   namespaces, overlayfs, /dev /proc /sys, pivot_root, exec, 
 internal/cgroups/     cgroup v2 limits, systemd delegation, usage stats
 internal/network/     loopback, slirp4netns, port forwarding
 internal/security/    capabilities, seccomp-BPF compiler, Docker profile, masked paths, policies
-internal/profile/     ptrace tracer, recorder, policy generation
+internal/profile/     ptrace tracer, recorder, policy generation, live events
+internal/ui/          `minibox ui`: demo dashboard (server + embedded page)
 tests/smoke.sh        end-to-end checks for every phase
 tests/attacks/        attack probe + runner (17 attacks × 3 configs)
-bench/  tools/        benchmark harness, load generator, policy statistics
+tests/ui/             optional headless-browser check of the dashboard
+bench/  tools/        benchmark harness, load generator, policy statistics, BPF dump
 scripts/              environment check, image download, result copying
 docs/                 design notes per phase, concepts, viva prep
 results/              generated CSV and Markdown results
@@ -412,6 +438,8 @@ results/              generated CSV and Markdown results
 | [docs/phase4-security.md](docs/phase4-security.md) | Capabilities, seccomp compiler, masked paths |
 | [docs/phase5-profiling.md](docs/phase5-profiling.md) | ptrace vs eBPF, tracer design, policy format |
 | [docs/phase6-evaluation.md](docs/phase6-evaluation.md) | Attack suite, benchmarks, analysis |
+| [docs/phase8-demo-ui.md](docs/phase8-demo-ui.md) | `minibox ui` and the explainer: panels, design, safety |
+| [docs/explainer.html](docs/explainer.html) | Interactive explainer (lifecycle, seccomp walkthrough, attacks) |
 | [docs/viva-prep.md](docs/viva-prep.md) | 20 likely examiner questions with answers |
 | [docs/team-split.md](docs/team-split.md) | How the codebase splits among 3 team members |
 | [docs/PROGRESS.md](docs/PROGRESS.md) | Phase-by-phase log and open issues |

@@ -17,6 +17,11 @@ about another member's part.
 Shared work: README, `how-it-works.md`, rehearsing the full demo, and reading
 each other's phase docs before the viva.
 
+The demo dashboard (`minibox ui`, Phase 8) follows the same split: each
+member presents their own panels. A: Isolation and Resource limits. B:
+Inside the filter. C: Profile and enforce, and the Attack suite. Member C
+owns the server code (`internal/ui/`).
+
 Rough size of each slice, so the split is fair: run
 `wc -l internal/*/*.go cmd/minibox/*.go tests/attacks/probe/*.go tools/*/*.go`
 to see the line counts per package. Each slice is a similar mix of

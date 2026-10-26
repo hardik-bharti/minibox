@@ -2,11 +2,41 @@
 
 ## Current phase
 
-**All phases (0-7) done.** The project is complete. Remaining items are
-optional improvements (see Next) and the open issues below. The user asked
-(2026-10-25) for Phases 3-7 in one go, with no stop between phases.
+**Phase 8 (demo UI and explainer), done.** Phases 0-7 are complete. On
+2026-10-26 the user asked for both UI options proposed earlier (a live
+`minibox ui` dashboard and an interactive explainer), built together.
 
 ## Done
+
+### Phase 8: Demo UI and explainer (2026-10-26)
+- `minibox ui` (package `internal/ui`, stdlib only, page embedded): five
+  panels: isolation, resource limits (live cgroup charts), profile and
+  enforce (live syscall stream, policy vs Docker's 309), the attack suite,
+  and one syscall stepped through the compiled BPF. Every panel shows the
+  real `minibox` command it runs. `make ui`, loopback only, SSH tunnel
+  from the host.
+- Safety: a fixed action catalogue with choice-only parameters, a POST
+  header check, a Host check (DNS rebinding), CSP, one job at a time,
+  timeouts, and Stop via the same two-signal path as Ctrl-C.
+- New hooks: `minibox profile --events FILE` (first sightings + throttled
+  totals, O_CLOEXEC); `security.Disassemble` / `security.Evaluate`;
+  `tools/bpfdump`; probe `grow-memory` (a gradual memory hog for the chart).
+- `docs/explainer.html`, published at
+  https://claude.ai/artifact/NdmCXHKhN5a9qTtVNPGjPG: a 9-step lifecycle
+  stepper, the seccomp walkthrough on real `bpfdump` output (generated
+  policy vs baseline), and the attack matrix from `results/attacks.csv`.
+  Data via `make explainer` (`scripts/build-explainer.py`).
+- **Bug found and fixed (Phases 4/5):** init crashed intermittently under
+  policies without `futex`, because the seccomp install returned through the Go
+  scheduler. Rate before: 7/150; after (`security.ExecLocked`, seccomp and
+  execve as back-to-back RawSyscalls): 0/300. Smoke regression check added.
+  Benchmarks unaffected (the harness fails on any non-zero exit).
+- Gotcha: busybox `timeout` execs the command, which as PID 1 ignored
+  SIGTERM. The CPU demo keeps a shell as PID 1.
+- Tests: `internal/ui/ui_test.go`, `internal/profile/events_test.go`,
+  `internal/security/disasm_test.go`, 12 Phase 8 smoke checks, and optional
+  `tests/ui/check_ui.py` (Playwright).
+- Write-up: `docs/phase8-demo-ui.md`.
 
 ### Phase 7: Write-up (2026-10-25)
 - README: overview, Mermaid architecture diagram, quick start, demo commands
@@ -167,12 +197,16 @@ optional improvements (see Next) and the open issues below. The user asked
 ## Next
 
 Optional improvements, not started:
+0. Record a short screen capture of `minibox ui` as a viva backup (in case the VM misbehaves on the day).
 1. `minibox prune` for state dirs left behind when minibox itself is SIGKILLed.
 2. Argument-level rules in generated policies (beyond clone), e.g. socket families.
 3. Multi-UID containers via newuidmap (needs `sudo apt install uidmap`).
 4. More benchmark repetitions on a quieter host for tighter confidence intervals.
 
 ## Open issues
+- `tests/ui/check_ui.py` needs Playwright for Python (installed in
+  `~/.venvs/playwright`, outside the repo) and Chromium's system libraries
+  (`sudo ~/.venvs/playwright/bin/playwright install-deps chromium`).
 - If minibox itself is SIGKILLed, its container dir under
   `~/.local/share/minibox/containers/` is left behind (the container itself is
   killed). Possible fix later: a `minibox prune` command.

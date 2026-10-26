@@ -2,6 +2,7 @@ package profile
 
 import (
 	"fmt"
+	"io"
 	"path"
 	"sort"
 	"syscall"
@@ -23,16 +24,19 @@ func (p *Profiler) Trace(pid int) (syscall.WaitStatus, error) {
 }
 
 // Run profiles the container described by c and returns its result and
-// the generated policy.
+// the generated policy. If events is not nil, live observations are
+// written to it as JSON lines (see Event).
 //
 // The container runs with --security none: no seccomp and every
 // capability, so we observe everything the program tries to do rather
 // than what a previous policy let it do.
-func Run(c *container.Config) (container.Result, *security.PolicyFile, error) {
+func Run(c *container.Config, events io.Writer) (container.Result, *security.PolicyFile, error) {
 	p := &Profiler{rec: newRecorder()}
+	p.rec.events = newEventSink(events)
 	c.Tracer = p
 	c.Security = security.Config{Mode: security.None}
 	res, err := container.Run(c)
+	p.rec.events.progress(p.rec.total, true) // the final total, even if just sent
 	if err != nil {
 		return res, nil, err
 	}

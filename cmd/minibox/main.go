@@ -19,6 +19,7 @@ const usage = `minibox: a rootless Linux container runtime
 Usage:
   minibox run [flags] <rootfs> <cmd> [args...]      run a command in a container
   minibox profile [flags] <rootfs> <cmd> [args...]  trace a command, write policy.json
+  minibox ui [flags]                                demo dashboard in the browser
   minibox version                                   print version
   minibox help                                      show this help
 `
@@ -50,6 +51,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdInit(stderr)
 	case "profile":
 		return cmdProfile(args[1:], stderr)
+	case "ui":
+		return cmdUI(args[1:], stderr)
 	default:
 		fmt.Fprintf(stderr, "minibox: unknown command %q\n\n%s", args[0], usage)
 		return 2

@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>minibox lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <h1>minibox lab</h1>
+    <p>Live demos of a rootless container runtime. Every view runs the real <code>minibox</code> command shown under it.</p>
+  </div>
+  <div class="status" id="status" role="status" aria-live="polite">
+    <span class="dot" aria-hidden="true"></span><span id="status-text">Connecting…</span>
+    <button type="button" id="stop" class="ghost" hidden>Stop</button>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist" aria-label="Demos">
+  <button role="tab" id="tab-isolation" aria-controls="panel-isolation" data-panel="isolation" aria-selected="true"><span class="ph">Phase 1</span>Isolation</button>
+  <button role="tab" id="tab-limits" aria-controls="panel-limits" data-panel="limits" aria-selected="false"><span class="ph">Phase 2</span>Resource limits</button>
+  <button role="tab" id="tab-profile" aria-controls="panel-profile" data-panel="profile" aria-selected="false"><span class="ph">Phase 5</span>Profile and enforce</button>
+  <button role="tab" id="tab-attacks" aria-controls="panel-attacks" data-panel="attacks" aria-selected="false"><span class="ph">Phase 6</span>Attack suite</button>
+  <button role="tab" id="tab-filter" aria-controls="panel-filter" data-panel="filter" aria-selected="false"><span class="ph">Phases 4–5</span>Inside the filter</button>
+</nav>
+
+<main>
+  <!-- Phase 1 -->
+  <section class="panel" id="panel-isolation" role="tabpanel" aria-labelledby="tab-isolation">
+    <div class="intro">
+      <h2>Same kernel, different view</h2>
+      <p>The container is an ordinary process on this VM. Namespaces give it its own copy of IDs, hostname, mounts and network, and the overlay root keeps the image untouched.</p>
+    </div>
+    <div class="controls">
+      <label>Container hostname <select id="iso-hostname"></select></label>
+      <button type="button" class="primary" data-run="isolation">Compare host and container</button>
+      <button type="button" data-run="overlay">Change a file in the image</button>
+    </div>
+    <div class="cmdstrip" data-strip="isolation"></div>
+    <div class="viz" id="iso-viz">
+      <p class="empty">Run <b>Compare host and container</b> to see what this VM shows a normal process, next to what the container sees.</p>
+    </div>
+    <details class="log"><summary>Command output</summary><pre data-log="isolation"></pre></details>
+  </section>
+
+  <!-- Phase 2 -->
+  <section class="panel" id="panel-limits" role="tabpanel" aria-labelledby="tab-limits" hidden>
+    <div class="intro">
+      <h2>Limits the kernel enforces</h2>
+      <p>Each container gets its own cgroup. The chart reads the cgroup's accounting files ten times a second while the program pushes against the limit.</p>
+    </div>
+    <div class="controls">
+      <div class="segmented" role="radiogroup" aria-label="Experiment" id="lim-kind">
+        <button type="button" role="radio" aria-checked="true" data-kind="memory">Memory hog</button>
+        <button type="button" role="radio" aria-checked="false" data-kind="pids">Fork loop</button>
+        <button type="button" role="radio" aria-checked="false" data-kind="cpu">CPU burner</button>
+      </div>
+      <label><span id="lim-label">--memory</span> <select id="lim-value"></select></label>
+      <button type="button" class="primary" id="lim-run">Run experiment</button>
+    </div>
+    <p class="explain" id="lim-explain"></p>
+    <div class="cmdstrip" data-strip="limits"></div>
+    <div class="viz meter-viz">
+      <figure class="chart-card">
+        <figcaption><span id="lim-title">Memory used</span><span class="readout" id="lim-readout"></span></figcaption>
+        <div class="chart" id="lim-chart"></div>
+      </figure>
+      <dl class="facts" id="lim-facts"></dl>
+    </div>
+    <details class="log"><summary>Readings as a table</summary><div class="tablewrap"><table class="readings" id="lim-table"></table></div></details>
+    <details class="log"><summary>Command output</summary><pre data-log="limits"></pre></details>
+  </section>
+
+  <!-- Phase 5 -->
+  <section class="panel" id="panel-profile" role="tabpanel" aria-labelledby="tab-profile" hidden>
+    <div class="intro">
+      <h2>Watch, then allow only that</h2>
+      <p><code>minibox profile</code> traces a program with ptrace and writes down every syscall, file and capability it uses. <code>minibox run --policy</code> then denies everything else.</p>
+    </div>
+    <div class="controls">
+      <label>Program <select id="prof-workload"></select></label>
+      <button type="button" class="primary" data-run="profile">Profile it</button>
+    </div>
+    <div class="cmdstrip" data-strip="profile"></div>
+    <div class="viz prof-grid">
+      <div class="prof-live">
+        <h3>Syscalls, in the order first seen <span class="count" id="prof-total"></span></h3>
+        <ol class="chips" id="prof-syscalls" aria-live="off"></ol>
+        <h3>Files touched</h3>
+        <ul class="paths" id="prof-paths"></ul>
+        <h3>Capabilities inferred</h3>
+        <ul class="paths" id="prof-caps"><li class="none">None yet</li></ul>
+      </div>
+      <div class="prof-policy">
+        <h3>Policy compared with Docker's default</h3>
+        <p class="explain" id="prof-compare">The grid shows the syscalls Docker's default profile allows. After profiling, the ones this program's policy keeps light up.</p>
+        <div class="grid309" id="prof-grid" role="img" aria-label="Docker's allowed syscalls"></div>
+        <p class="legend"><span class="sw on"></span>kept by the policy <span class="sw"></span>denied by the policy</p>
+      </div>
+    </div>
+    <div class="enforce">
+      <h3>Run something under a policy</h3>
+      <div class="controls">
+        <label>Policy from <select id="enf-policy"></select></label>
+        <label>Program to run <select id="enf-workload"></select></label>
+        <button type="button" class="primary" data-run="enforce">Run under policy</button>
+      </div>
+      <div id="enf-result" class="enf-result"><p class="empty">Profile a program first, then run it, or a different one, under its policy.</p></div>
+    </div>
+    <details class="log"><summary>Command output</summary><pre data-log="profile"></pre></details>
+  </section>
+
+  <!-- Phase 6 -->
+  <section class="panel" id="panel-attacks" role="tabpanel" aria-labelledby="tab-attacks" hidden>
+    <div class="intro">
+      <h2>17 attacks, three configurations</h2>
+      <p>Each attack runs in a fresh container: with namespaces only, with the Docker-like baseline, and with the generated policy. Same probe, same flags as <code>tests/attacks/run.py</code>.</p>
+    </div>
+    <div class="controls">
+      <button type="button" class="primary" data-run="attack-all">Run all 17</button>
+      <span class="hint">or run a single row with its own button</span>
+    </div>
+    <div class="cmdstrip" data-strip="attacks"></div>
+    <div class="viz">
+      <div class="tablewrap">
+        <table class="matrix" id="atk-table">
+          <thead><tr><th scope="col">Attack</th><th scope="col">none</th><th scope="col">baseline</th><th scope="col">policy</th><th scope="col"><span class="sr">Run</span></th></tr></thead>
+          <tbody></tbody>
+          <tfoot><tr><th scope="row">Blocked</th><td data-sum="none">–</td><td data-sum="baseline">–</td><td data-sum="policy">–</td><td></td></tr></tfoot>
+        </table>
+      </div>
+      <p class="detail" id="atk-detail" aria-live="polite">Select a result to see what the probe reported.</p>
+    </div>
+    <details class="log"><summary>Command output</summary><pre data-log="attacks"></pre></details>
+  </section>
+
+  <!-- Phases 4-5 -->
+  <section class="panel" id="panel-filter" role="tabpanel" aria-labelledby="tab-filter" hidden>
+    <div class="intro">
+      <h2>One syscall through the seccomp filter</h2>
+      <p>This is the classic-BPF program our compiler gives the kernel, which runs it on every syscall. Pick a syscall to see the exact path it takes and the verdict.</p>
+    </div>
+    <div class="controls">
+      <label>Filter <select id="flt-source"></select></label>
+      <label>Syscall <select id="flt-syscall"></select></label>
+      <button type="button" class="primary" id="flt-show">Trace it</button>
+      <button type="button" id="flt-step" disabled>Step</button>
+      <button type="button" id="flt-play" disabled>Play</button>
+    </div>
+    <div class="viz flt-grid">
+      <div class="verdict" id="flt-verdict"><p class="empty">Choose a filter and a syscall.</p></div>
+      <div class="tablewrap listing"><table class="prog" id="flt-prog"><thead><tr><th scope="col">pc</th><th scope="col">BPF</th><th scope="col">Meaning</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="alert" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

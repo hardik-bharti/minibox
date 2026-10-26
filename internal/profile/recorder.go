@@ -95,6 +95,8 @@ type recorder struct {
 	created map[string]bool // directories whose entries changed
 	caps    map[string]string
 	hostUID int // our UID on the host = container root
+	total   int // syscalls recorded, for the live progress events
+	events  *eventSink
 }
 
 func newRecorder() *recorder {
@@ -135,7 +137,12 @@ func (r *recorder) onExit(e event) {
 		r.unknown[e.nr]++
 		return
 	}
+	if r.counts[name] == 0 {
+		r.events.emit(Event{Kind: "syscall", Name: name})
+	}
 	r.counts[name]++
+	r.total++
+	r.events.progress(r.total, false)
 	failed := e.ret < 0 && e.ret > -4096
 
 	for _, p := range e.paths {
@@ -143,28 +150,36 @@ func (r *recorder) onExit(e event) {
 			// A failed lookup still tells us the app looked there, but
 			// a failed write doesn't need write permission.
 			if p.kind == pathRead {
-				r.read[p.path] = true
+				r.note(r.read, p.path, "read")
 			}
 			continue
 		}
 		switch p.kind {
 		case pathRead:
-			r.read[p.path] = true
+			r.note(r.read, p.path, "read")
 		case pathWrite:
-			r.written[p.path] = true
+			r.note(r.written, p.path, "write")
 		case pathCreate:
 			// Creating, deleting or renaming changes the parent
 			// directory, so that is what must be writable. (Opening an
 			// existing file with O_CREAT only writes the file.)
 			if p.existed && (name == "open" || name == "openat" || name == "openat2" || name == "creat") {
-				r.written[p.path] = true
+				r.note(r.written, p.path, "write")
 			} else {
-				r.created[path.Dir(p.path)] = true
+				r.note(r.created, path.Dir(p.path), "write")
 			}
 		}
 	}
 	if !failed {
 		r.inferCaps(name, e)
+	}
+}
+
+// note records path p in set m and, the first time, reports it live.
+func (r *recorder) note(m map[string]bool, p, access string) {
+	if !m[p] {
+		m[p] = true
+		r.events.emit(Event{Kind: "path", Path: p, Access: access})
 	}
 }
 
@@ -228,6 +243,7 @@ func (r *recorder) inferCaps(name string, e event) {
 	add := func(c, why string) {
 		if _, ok := r.caps[c]; !ok {
 			r.caps[c] = why
+			r.events.emit(Event{Kind: "cap", Name: c, Reason: why})
 		}
 	}
 	switch name {

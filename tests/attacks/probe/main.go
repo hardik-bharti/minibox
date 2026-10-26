@@ -74,6 +74,9 @@ func main() {
 		return
 	case "ptrace-attach": // helper for ptrace
 		os.Exit(ptraceAttach(os.Args[2]))
+	case "grow-memory": // demo workload for `minibox ui`
+		growMemory()
+		return
 	case "list":
 		names := make([]string, 0, len(attacks))
 		for n := range attacks {
@@ -96,7 +99,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: probe <attack>|benign|list")
+	fmt.Fprintln(os.Stderr, "usage: probe <attack>|benign|grow-memory|list")
 	os.Exit(2)
 }
 
@@ -127,6 +130,26 @@ func benign() int {
 	}
 	fmt.Println("benign ok", len(buf))
 	return 0
+}
+
+// growMemory allocates and touches 2 MiB every 100 ms, up to 1 GiB. It is
+// not an attack: `minibox ui` runs it under --memory so the live meter
+// climbs visibly towards the limit before the OOM kill, which a single
+// big allocation (attackMemory) would hide in one jump.
+func growMemory() {
+	const step, max = 2 << 20, 1 << 30
+	for total := step; total <= max; total += step {
+		b, err := unix.Mmap(-1, 0, step, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_PRIVATE|unix.MAP_ANON)
+		if err != nil {
+			fmt.Println("mmap:", err)
+			os.Exit(2)
+		}
+		for i := 0; i < step; i += 4096 {
+			b[i] = 1 // touch every page so it is really charged to the cgroup
+		}
+		fmt.Printf("allocated %d MiB\n", total>>20)
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // 1. Mount a filesystem (needs CAP_SYS_ADMIN; mount is the first step of

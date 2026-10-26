@@ -173,3 +173,4 @@ checks. But loading tracing programs needs real root on this kernel
 6. `internal/security/`: caps, seccomp compiler, Docker profile, masking, policy
 7. `internal/profile/`: tracer, recorder, policy generation
 8. `tests/smoke.sh`, `tests/attacks/`, `bench/`: evidence
+9. `internal/ui/`: the demo dashboard, which runs the CLI and reads the kernel's own files

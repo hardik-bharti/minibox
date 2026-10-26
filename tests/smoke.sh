@@ -230,12 +230,48 @@ field=Seccomp; check "--policy installs a seccomp filter" "2" "$(status --policy
 python3 -I -c 'import json,sys; p=json.load(open(sys.argv[1])); p["capabilities"]=[]; json.dump(p,open(sys.argv[1],"w"))' "$pol"
 check "without the cap, binding port 80 fails" "denied" "$("$B" run --policy "$pol" "$IMG" sh -c 'nc -l -p 80 2>/tmp/err; grep -q "Permission denied" /tmp/err && echo denied')"
 
+# Regression: the policy above has no futex. Installing the filter used to
+# return through the Go scheduler, which sometimes called futex and crashed
+# init (about 1 run in 20). Now seccomp and execve are back-to-back raw syscalls.
+crashes=0
+for _ in $(seq 60); do "$B" run --policy "$pol" "$IMG" true 2>&1 | grep -q 'fatal error\|SIGSEGV' && crashes=$((crashes + 1)); done
+check "policy without futex never crashes init (60 runs)" "0" "$crashes"
+
 set +e; "$B" profile -o "$MINIBOX_ROOT/p2.json" "$IMG" sh -c 'exit 7' >/dev/null 2>&1; code=$?; set -e
 check "profile propagates exit code" "7" "$code"
 "$B" profile -o "$MINIBOX_ROOT/p2.json" --merge "$IMG" sh -c 'echo > /tmp/a' >/dev/null 2>&1
 check "--merge unions writable paths across runs" "['/tmp']" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["writable_paths"])' "$MINIBOX_ROOT/p2.json")"
 rm -f "$pol" "$MINIBOX_ROOT/p2.json"
 check "no state left after profiling" "0" "$(find "$MINIBOX_ROOT" -mindepth 1 | wc -l)"
+
+echo "Phase 8: demo UI (minibox ui)"
+
+port=7179
+url=http://127.0.0.1:$port
+sse=$MINIBOX_ROOT/ui-events.txt
+"$B" ui --addr 127.0.0.1:$port 2>"$MINIBOX_ROOT/ui.log" & ui_pid=$!
+for _ in $(seq 50); do curl -sf "$url/api/info" >/dev/null 2>&1 && break; sleep 0.1; done
+curl -sN "$url/api/events" >"$sse" & sse_pid=$!
+sleep 0.3
+post() { curl -s -o /dev/null -w '%{http_code}' -H 'X-Minibox-UI: 1' -H 'Content-Type: application/json' -d "$1" "$url/api/run"; }
+# Waits until no demo is running.
+ui_wait() { sleep 0.3; while curl -s "$url/api/info" | grep -q '"running"'; do sleep 0.2; done; }
+check "ui serves the page" "200" "$(curl -s -o /dev/null -w '%{http_code}' "$url/")"
+check "ui lists 9 actions" "9" "$(curl -s "$url/api/info" | python3 -I -c 'import json,sys; print(len(json.load(sys.stdin)["actions"]))')"
+check "ui refuses POST without its header" "403" "$(curl -s -o /dev/null -w '%{http_code}' -d '{}' "$url/api/run")"
+check "ui refuses a foreign Host (DNS rebinding)" "403" "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' "$url/api/info")"
+check "ui refuses parameters not on offer" "400" "$(post '{"action":"memory","params":{"limit":"9g"}}')"
+check "ui starts the isolation demo" "200" "$(post '{"action":"isolation","params":{"hostname":"viva"}}')"; ui_wait
+check "isolation result: root inside, hostname viva" "0 viva" "$(grep '"kind":"isolation"' "$sse" | python3 -I -c 'import json,sys; d=json.loads(sys.stdin.readline()[6:])["data"]["container"]; print(d["uid"], d["hostname"])')"
+post '{"action":"memory","params":{"limit":"32m"}}' >/dev/null; ui_wait
+check "memory demo streams live cgroup readings" "True" "$(python3 -I -c 'import sys; print(sum("\"type\":\"meter\"" in l for l in open(sys.argv[1])) > 10)' "$sse")"
+check "memory demo ends in an OOM kill (exit 137)" "137" "$(grep '"limit_kind":"memory"' "$sse" | python3 -I -c 'import json,sys; print(json.loads(sys.stdin.readline()[6:])["data"]["code"])')"
+post '{"action":"profile","params":{"workload":"note"}}' >/dev/null; ui_wait
+check "profile demo streams syscalls live" "True" "$(grep -q '"kind":"syscall"' "$sse" && echo True)"
+check "filter view traces clone(CLONE_NEWUSER) to EPERM" "ERRNO(EPERM)" "$(curl -s "$url/api/filter?source=workload:note&syscall=clone&variant=newuser" | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["trace"]["result"])')"
+kill "$sse_pid" 2>/dev/null || true
+kill -INT "$ui_pid"; wait "$ui_pid" 2>/dev/null || true
+check "ui leaves no container state behind" "0" "$(find "$MINIBOX_ROOT" -mindepth 1 -not -name 'ui*' | wc -l)"
 
 echo
 if [ "$failures" -eq 0 ]; then echo "smoke tests passed"; else echo "$failures smoke test(s) FAILED"; exit 1; fi

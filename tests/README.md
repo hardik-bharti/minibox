@@ -8,5 +8,6 @@ This directory holds tests that need the real VM:
 | `smoke.sh` | Setup and end-to-end sanity checks; grows with each phase | `make smoke` |
 | `attacks/probe/` | One static Go binary, one subcommand per attack (17 attacks), mounted read-only at `/probe` | built by `run.py` |
 | `attacks/run.py` | Runs every attack under `none`, `baseline` and `policy`; writes `results/attacks.{csv,md}` | `make attacks` |
+| `ui/check_ui.py` | Optional: clicks through every `minibox ui` panel in headless Chromium, screenshots light/dark/phone, fails on JS errors | `<python with playwright> tests/ui/check_ui.py` |
 
 Benchmarks live in `bench/run.py` (`make bench`). Results are in `results/`.

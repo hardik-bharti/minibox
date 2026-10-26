@@ -4,17 +4,26 @@ BIN     := bin/minibox
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION)
 
-.PHONY: all build test smoke vet fmt check-env image bench-image attacks bench clean help
+.PHONY: all build probe ui explainer test smoke vet fmt check-env image bench-image attacks bench clean help
 
 all: build
 
 build: ## Build bin/minibox
 	go build -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/minibox
 
+probe: ## Build the attack probe (tests/attacks/bin/probe), used by `make ui` and the attack suite
+	CGO_ENABLED=0 go build -o tests/attacks/bin/probe ./tests/attacks/probe
+
+ui: build probe ## Start the demo dashboard on http://127.0.0.1:7070
+	$(BIN) ui
+
+explainer: ## Regenerate the data in docs/explainer.html (from bpfdump and results/)
+	scripts/build-explainer.py
+
 test: ## Run unit tests
 	go test ./...
 
-smoke: build ## Run end-to-end smoke tests in this VM (needs `make image`)
+smoke: build probe ## Run end-to-end smoke tests in this VM (needs `make image`)
 	tests/smoke.sh
 
 vet: ## Run go vet
